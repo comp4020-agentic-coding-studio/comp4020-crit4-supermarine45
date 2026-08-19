@@ -1,24 +1,150 @@
-<!doctype html>
-<html lang="en-AU">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>COMP4020 prototype</title>
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <header>
-      <nav aria-label="Primary">
-        <a href="./">Home</a>
-      </nav>
-    </header>
-    <main>
-      <h1>COMP4020 prototype</h1>
-      <p data-testid="intro">
-        Replace this with your prototype. This week's brief is on the course website;
-        <code>spec/README.md</code> explains how the checks in this repo relate to it.
-      </p>
-    </main>
-    <script type="module" src="./main.ts"></script>
-  </body>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Constellation Jam Station</title>
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <nav class="sr-only" aria-label="Primary">
+    <a href="./">Home</a>
+  </nav>
+  <h1 class="sr-only">Constellation Jam Station</h1>
+  <div class="dashboard">
+
+    <!-- Left sidebar: the drum backing track, in two switchable modes that
+         share the same 8 synthesized voices (Hat, Snare, Kick, Tom, Open
+         Hat, Clap, Rimshot, Cowbell) and the same drum bus - only the view
+         changes, not what's audible:
+           Step - an 8x4 toggle grid, one bar of 4 eighth-note steps.
+           Kit  - 8 big GarageBand-style pads you tap live.
+         Only the first 4 rows (Hat/Snare/Kick/Tom) have keyboard shortcuts
+         (Digit1-8, Shift for the second pair) - the row grid Open
+         Hat/Clap/Rimshot/Cowbell rows are click/tap-only, since QWERTYUIOP
+         now belongs to the piano's third row (see #center-stage below).
+         A loop pedal (Rec/Clear) records whatever you tap in Kit mode;
+         finishing a take turns it into a draggable card in the Loop
+         Library shelf (see #track-deck below) instead of looping it
+         forever by itself. Pads/keys are generated in app.js. -->
+    <section id="drum-section">
+      <div id="drum-mode-toggle">
+        <button id="drum-mode-step" class="drum-mode-btn active" type="button">Step</button>
+        <button id="drum-mode-kit" class="drum-mode-btn" type="button">Kit</button>
+      </div>
+      <div id="drum-pads"></div>
+      <div id="drum-kit-pads"></div>
+      <div id="drum-loop-controls">
+        <button id="drum-loop-rec" class="loop-btn" type="button">&#9679; Rec</button>
+        <button id="drum-loop-clear" class="loop-btn" type="button">Clear</button>
+      </div>
+    </section>
+
+    <!-- Center stage: the Constellation Looper canvas, with the Live Piano
+         overlaid across its bottom edge. Clicking/touching the canvas drops
+         a glowing "star" that loops forever, retriggering every bar when the
+         sweeping playhead crosses it; the Y-axis snaps to the selected scale
+         so no star can ever be a wrong note. The piano overlay is the "jam
+         over the loop" instrument, spanning three physical key rows (30
+         keys) so both hands have real range: the bottom row Z X C V B N M
+         , . / (left hand, lowest register) continues into the middle row
+         A S D F G H J K L ; (right hand, mid register), which continues
+         into the top row Q W E R T Y U I O P (highest register), plus
+         their on-screen twins. Notes are quantized to the selected scale -
+         unless Chromatic is selected, which deliberately opts out of that
+         guarantee. A loop pedal (Rec/Clear) records a live performance;
+         finishing a take turns it into a draggable Loop Library card (see
+         #track-deck below) instead of looping it forever by itself. -->
+    <div id="center-stage">
+      <canvas id="constellation-canvas"></canvas>
+      <div id="piano-overlay">
+        <div id="piano-toolbar">
+          <label class="control horizontal" id="octave-control">
+            <span>Octave</span>
+            <input type="range" id="octave-slider" min="-2" max="2" value="0" step="1">
+          </label>
+          <div class="loop-pedal">
+            <button id="piano-loop-rec" class="loop-btn" type="button">&#9679; Rec</button>
+            <button id="piano-loop-clear" class="loop-btn" type="button">Clear</button>
+          </div>
+        </div>
+        <div id="piano-keys"></div>
+      </div>
+    </div>
+
+    <!-- Right sidebar: scale/patch selection + master effect send levels.
+         Backing Styles used to live here as a one-button toggle; they're
+         now permanent cards in the Loop Library shelf below (#track-deck),
+         draggable onto any track like any other loop, and more than one
+         can run at once. -->
+    <section id="controls">
+      <label class="control">
+        <span>Scale</span>
+        <select id="scale-select">
+          <option value="majorPentatonic">Major Pentatonic</option>
+          <option value="minorPentatonic">Minor Pentatonic</option>
+          <option value="blues">Blues</option>
+          <option value="dorian">Dorian</option>
+          <option value="lydian">Lydian</option>
+          <option value="chromatic">Chromatic</option>
+        </select>
+      </label>
+      <label class="control">
+        <span>Patch</span>
+        <select id="patch-select">
+          <option value="pluck">Pluck Synth</option>
+          <option value="epiano">Electric Piano</option>
+          <option value="marimba">Marimba</option>
+          <option value="bass">Upright Bass</option>
+          <option value="fmbrass">FM Brass</option>
+          <option value="pad">Pad</option>
+        </select>
+      </label>
+      <label class="control">
+        <span>Reverb</span>
+        <input type="range" id="reverb-slider" min="0" max="100" value="25">
+      </label>
+      <label class="control">
+        <span>Delay</span>
+        <input type="range" id="delay-slider" min="0" max="100" value="20">
+      </label>
+    </section>
+
+    <!-- Bottom bar: the Track Deck - tempo controls, plus the Loop Library
+         + Track launcher system (Loopy HD/GarageBand-style). BPM sets the
+         master clock's step duration and scales drum envelope decay times;
+         Swing delays the off-beat steps of the sequencer for a human/jazzy
+         shuffle feel.
+           Loop Library shelf - one draggable card per clip: the 8 Backing
+             Styles (always present) plus any Piano/Drum/Voice takes you
+             record. Drag a card onto a track lane below to load it there.
+           Tracks - a fixed set of independent loopers; each plays whatever
+             clip is loaded on it, forever, at that clip's own length, with
+             no shared timeline - drop a different clip on a track at any
+             time to change what that track plays. Mute (M) silences a
+             track without unloading it; Clear (x) empties it immediately.
+         Cards/lanes are generated in app.js. -->
+    <section id="track-deck">
+      <div id="track-deck-transport">
+        <label class="control horizontal">
+          <span>BPM</span>
+          <input type="range" id="bpm-slider" min="60" max="180" value="120">
+        </label>
+        <label class="control horizontal">
+          <span>Swing</span>
+          <input type="range" id="swing-slider" min="0" max="100" value="30">
+        </label>
+        <button id="record-voice-btn" class="loop-btn" type="button">&#9679; Record Voice</button>
+        <span id="voice-status"></span>
+      </div>
+      <div id="loop-shelf"></div>
+      <div id="track-list-wrap">
+        <div id="track-list"></div>
+        <button id="add-track-btn" class="loop-btn" type="button">+ Track</button>
+      </div>
+    </section>
+
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
 </html>

@@ -1,16 +1,737 @@
-body {
+:root {
+  --bg: #0b0f1a;
+  --panel: #121828;
+  --panel-edge: #1e2740;
+  --text: #7d8bab;
+  --cyan: #22d3ee;
+  --amber: #f5a623;
+  --coral: #ff5c72;
+  --violet: #b28dff;
+  --lime: #8ce99a;
+  --pink: #ff8fab;
+  --teal: #2dd4bf;
+  --gold: #e6c229;
+  --lead-color: var(--amber);
+}
+
+html, body {
   margin: 0;
-  padding: 2rem;
-  font-family: system-ui, sans-serif;
-  line-height: 1.6;
-  color: #1a1a1a;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  user-select: none;
 }
 
-main {
-  max-width: 40rem;
-  margin: 0 auto;
+.dashboard {
+  display: grid;
+  grid-template: "left center right" 1fr "bottom bottom bottom" 230px / 260px 1fr 260px;
+  width: 100vw;
+  height: 100vh;
+  gap: 10px;
+  padding: 10px;
+  box-sizing: border-box;
 }
 
-a {
-  color: #0b5fff;
+/* ---------- Drum section (left sidebar): Step grid + Kit view ---------- */
+
+#drum-section {
+  grid-area: left;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  padding: 8px;
+  box-sizing: border-box;
+  min-height: 0;
+}
+
+#drum-mode-toggle {
+  display: flex;
+  gap: 6px;
+}
+
+.drum-mode-btn {
+  flex: 1;
+  background: #182036;
+  border: 1px solid #26314f;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 0;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
+}
+
+.drum-mode-btn.active {
+  background: var(--lead-color);
+  border-color: var(--lead-color);
+  color: #0b0f1a;
+}
+
+#drum-pads {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(8, 1fr);
+  gap: 5px;
+  min-height: 0;
+}
+
+/* 2 columns x 4 rows keeps all 8 pads big and tappable, rather than 8
+   sliver-thin stacked bars. */
+#drum-kit-pads {
+  flex: 1;
+  display: none;
+  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(4, 1fr);
+  gap: 8px;
+  min-height: 0;
+}
+
+/* Only one of the two views is visible at a time - both keep sounding
+   underneath regardless of which is shown, since neither ever stops the
+   scheduler or the loop pedal. */
+#drum-section.mode-kit #drum-pads { display: none; }
+#drum-section.mode-kit #drum-kit-pads { display: grid; }
+
+.kit-pad {
+  position: relative;
+  border-radius: 8px;
+  background: #182036;
+  border: 1px solid #26314f;
+  cursor: pointer;
+  touch-action: none;
+  transition: background 0.08s ease, border-color 0.08s ease, transform 0.08s ease;
+}
+
+.kit-pad:hover {
+  border-color: #4a5578;
+}
+
+.kit-pad.hit {
+  transform: scale(0.97);
+  filter: brightness(1.6);
+}
+
+.kit-pad.hit[data-row="0"] {
+  background: var(--cyan);
+  border-color: var(--cyan);
+}
+
+.kit-pad.hit[data-row="1"] {
+  background: var(--amber);
+  border-color: var(--amber);
+}
+
+.kit-pad.hit[data-row="2"] {
+  background: var(--coral);
+  border-color: var(--coral);
+}
+
+.kit-pad.hit[data-row="3"] {
+  background: var(--violet);
+  border-color: var(--violet);
+}
+
+.kit-pad.hit[data-row="4"] {
+  background: var(--lime);
+  border-color: var(--lime);
+}
+
+.kit-pad.hit[data-row="5"] {
+  background: var(--pink);
+  border-color: var(--pink);
+}
+
+.kit-pad.hit[data-row="6"] {
+  background: var(--teal);
+  border-color: var(--teal);
+}
+
+.kit-pad.hit[data-row="7"] {
+  background: var(--gold);
+  border-color: var(--gold);
+}
+
+.kit-pad .row-label {
+  position: absolute;
+  bottom: 8px;
+  left: 10px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: #4a5578;
+  pointer-events: none;
+}
+
+/* ---------- Loop pedal buttons (shared by piano + drum kit) ---------- */
+
+.loop-pedal, #drum-loop-controls {
+  display: flex;
+  gap: 6px;
+}
+
+.loop-btn {
+  background: #182036;
+  border: 1px solid #26314f;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
+}
+
+.loop-btn:hover {
+  border-color: #4a5578;
+}
+
+/* Actively capturing a performance - pulses so it reads as "live" without
+   any written instruction. */
+.loop-btn.recording {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #0b0f1a;
+  animation: rec-pulse 1s ease-in-out infinite;
+}
+
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.pad {
+  position: relative;
+  border-radius: 6px;
+  background: #182036;
+  border: 1px solid #26314f;
+  cursor: pointer;
+  touch-action: none;
+  transition: background 0.08s ease, border-color 0.08s ease, transform 0.08s ease;
+}
+
+.pad:hover {
+  border-color: #4a5578;
+}
+
+/* Persistent toggle state - this step is part of the pattern. Each
+   instrument row gets its own accent color so the 4 rows read at a glance. */
+.pad.on[data-row="0"] {
+  background: var(--cyan);
+  border-color: var(--cyan);
+}
+
+.pad.on[data-row="1"] {
+  background: var(--amber);
+  border-color: var(--amber);
+}
+
+.pad.on[data-row="2"] {
+  background: var(--coral);
+  border-color: var(--coral);
+}
+
+.pad.on[data-row="3"] {
+  background: var(--violet);
+  border-color: var(--violet);
+}
+
+.pad.on[data-row="4"] {
+  background: var(--lime);
+  border-color: var(--lime);
+}
+
+.pad.on[data-row="5"] {
+  background: var(--pink);
+  border-color: var(--pink);
+}
+
+.pad.on[data-row="6"] {
+  background: var(--teal);
+  border-color: var(--teal);
+}
+
+.pad.on[data-row="7"] {
+  background: var(--gold);
+  border-color: var(--gold);
+}
+
+/* Transient flash the instant the scheduler actually fires this step */
+.pad.hit {
+  transform: scale(0.92);
+  filter: brightness(1.6);
+}
+
+/* Continuous highlight showing which column the playhead is currently over,
+   independent of whether that column has any active steps */
+.pad.playhead-col {
+  border-color: #dce4ff;
+}
+
+.pad .row-label {
+  position: absolute;
+  bottom: 3px;
+  left: 5px;
+  font-size: 9px;
+  letter-spacing: 0.03em;
+  color: #4a5578;
+  pointer-events: none;
+}
+
+/* The physical key that toggles this pad, so the keyboard shortcut is
+   discoverable by looking rather than by instruction. */
+.pad .key-label {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 9px;
+  color: #4a5578;
+  pointer-events: none;
+}
+
+/* ---------- Center stage: Constellation canvas + Live Piano overlay ---------- */
+
+#center-stage {
+  grid-area: center;
+  position: relative;
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+#constellation-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: radial-gradient(circle at 50% 50%, #141c34, var(--panel));
+  border: 1px solid var(--panel-edge);
+  box-shadow: 0 0 40px -10px var(--lead-color);
+  touch-action: none;
+  cursor: crosshair;
+  transition: box-shadow 0.3s ease;
+  box-sizing: border-box;
+}
+
+/* Gentle breathing glow inviting the first click - removed once the user
+   has interacted at all, so it never fights with live playing feedback. */
+.dashboard:not(.started) #constellation-canvas {
+  animation: invite-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes invite-pulse {
+  0%, 100% { box-shadow: 0 0 30px -8px var(--lead-color); }
+  50% { box-shadow: 0 0 60px 4px var(--lead-color); }
+}
+
+/* The Live Piano sits as a translucent overlay across the canvas's bottom
+   edge rather than its own panel, so the canvas and the instrument you're
+   playing over it are visually one surface. */
+#piano-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 16px;
+  background: linear-gradient(to top, rgb(11 15 26 / 92%), rgb(11 15 26 / 55%) 75%, transparent);
+  pointer-events: none; /* the gradient backdrop itself is decorative; children re-enable interaction */
+}
+
+#piano-overlay > * {
+  pointer-events: auto;
+}
+
+#piano-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  max-width: 640px;
+}
+
+/* ---------- Shared control styling ---------- */
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.control.horizontal {
+  flex: 1;
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.control.horizontal span {
+  width: 48px;
+  flex: none;
+}
+
+#octave-control {
+  width: 220px;
+}
+
+#octave-control span {
+  width: auto;
+  margin-right: 8px;
+}
+
+#piano-keys {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  max-width: 640px;
+}
+
+/* Two stacked rows for two-handed play, mirroring the physical keyboard's
+   own geometry: the upper row here is A S D F G H J K L ; (right hand,
+   higher register), the lower row is Z X C V B N M , . / (left hand, lower
+   register) - directly below it on a real keyboard, directly below it here. */
+.piano-key-row {
+  display: flex;
+  gap: 4px;
+}
+
+.piano-key {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 52px;
+  padding-bottom: 6px;
+  background: #182036;
+  border: 1px solid #26314f;
+  border-radius: 6px;
+  color: #4a5578;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  transition: background 0.06s ease, border-color 0.06s ease, transform 0.06s ease, box-shadow 0.06s ease;
+}
+
+/* Black keys: narrower, shorter, and much darker than the surrounding white
+   keys. Rows are ordered ascending left-to-right already (scale degrees only
+   go up), so a real piano's alternating pattern falls out naturally without
+   any absolute positioning - a shorter key with the row's default (stretch)
+   alignment sits flush with the top and stops short of the bottom, reading
+   as "raised/set back" exactly like a real keyboard seen from above. */
+.piano-key.black-key {
+  flex: 0.65;
+  height: 30px;
+  background: #05070d;
+  border-color: #000;
+  color: #5a6485;
+  box-shadow: 0 3px 6px rgb(0 0 0 / 50%);
+  z-index: 1;
+}
+
+.piano-key.black-key:hover {
+  border-color: #333d5c;
+}
+
+/* The tonic of the scale on each octave, marked purely as a visual anchor -
+   every key is already scale-safe, so nothing here is ever disabled. */
+.piano-key.root {
+  border-color: #4a5578;
+}
+
+.piano-key.active {
+  background: var(--lead-color);
+  border-color: var(--lead-color);
+  color: #0b0f1a;
+  box-shadow: 0 0 16px var(--lead-color);
+  transform: translateY(2px);
+}
+
+/* ---------- Right sidebar: scale / patch / effect sends ---------- */
+
+#controls {
+  grid-area: right;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+/* ---------- Track Deck: tempo + Loop Library shelf + track launchers ---------- */
+
+#track-deck {
+  grid-area: bottom;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--panel-edge);
+  border-radius: 10px;
+  padding: 10px 16px;
+  box-sizing: border-box;
+  min-height: 0;
+}
+
+#track-deck-transport {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex: none;
+}
+
+#track-deck-transport .control.horizontal {
+  max-width: 220px;
+}
+
+#voice-status {
+  font-size: 11px;
+  color: var(--coral);
+  letter-spacing: 0.03em;
+}
+
+/* Loop Library shelf: a horizontally-scrolling row of draggable clip
+   cards - the 8 Backing Style presets plus any Piano/Drum/Voice takes the
+   user records. Cards never play by themselves; they only do anything
+   once dragged onto a track lane below. */
+#loop-shelf {
+  display: flex;
+  gap: 8px;
+  overflow: auto hidden;
+  padding: 4px 2px;
+  flex: none;
+}
+
+.loop-card {
+  --card-color: var(--cyan);
+
+  flex: none;
+  width: 108px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 4px;
+  background: #182036;
+  border: 1px solid var(--card-color);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.loop-card:active {
+  cursor: grabbing;
+}
+
+.loop-card-name {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #dce4ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.loop-card-len {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--card-color);
+}
+
+/* A floating clone that follows the pointer while dragging - fixed
+   positioning means it tracks the raw cursor/touch coordinates, offset so
+   the card sits centered under the finger/cursor rather than at its
+   top-left corner. */
+.drag-ghost {
+  position: fixed;
+  top: 0;
+  left: 0;
+  transform: translate(-50%, -50%);
+  z-index: 1000;
+  opacity: 0.9;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 50%);
+}
+
+/* Track lanes: fixed set of independent loopers. Each shows whatever clip
+   is currently loaded (or about to be, once quantized-launched) via its
+   own accent color, an independent per-track progress bar, a mute toggle,
+   and a clear button. */
+#track-list-wrap {
+  flex: 1;
+  display: flex;
+  gap: 8px;
+  min-height: 0;
+}
+
+#track-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.track-lane {
+  --lane-color: transparent;
+
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #182036;
+  border: 1px solid #26314f;
+  border-left: 4px solid var(--lane-color);
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-height: 30px;
+  transition: border-color 0.1s ease, background 0.1s ease;
+}
+
+.track-lane.drop-armed {
+  border-color: #4a5578;
+}
+
+.track-lane.drop-hover {
+  background: #202a45;
+  border-color: var(--lead-color);
+}
+
+.track-lane.muted {
+  opacity: 0.5;
+}
+
+.track-name {
+  width: 92px;
+  flex: none;
+  font-size: 12px;
+  color: #dce4ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-progress {
+  flex: 1;
+  height: 5px;
+  background: #0b0f1a;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.track-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--lane-color);
+}
+
+.track-lane.has-clip .track-progress-fill {
+  background: var(--lane-color, var(--lead-color));
+}
+
+.track-mute-btn, .track-clear-btn {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0f1a;
+  border: 1px solid #26314f;
+  border-radius: 5px;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.track-mute-btn.active {
+  background: var(--coral);
+  border-color: var(--coral);
+  color: #0b0f1a;
+}
+
+#add-track-btn {
+  flex: none;
+  align-self: stretch;
+}
+
+select {
+  background: #182036;
+  color: #dce4ff;
+  border: 1px solid #26314f;
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Custom range slider: thin glowing track + neon thumb, dark theme throughout */
+input[type="range"] {
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: #26314f;
+  border-radius: 2px;
+  outline: none;
+  flex: 1;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+  cursor: pointer;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px var(--cyan);
+  cursor: pointer;
+}
+
+/* Visually hidden but screen-reader-visible - the nav landmark and page
+   heading a single-page instrument doesn't otherwise need on screen. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
