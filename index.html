@@ -126,12 +126,18 @@
 
     <!-- Bottom bar: the Track Deck - tempo controls, plus the Loop Library
          + Track launcher system (Loopy HD/GarageBand-style). BPM sets the
-         master clock's step duration and scales drum envelope decay times;
+         master clock's step duration, scales drum envelope decay times, and
+         live-resamples (playbackRate) any playing Backing Style to match;
          Swing delays the off-beat steps of the sequencer for a human/jazzy
          shuffle feel.
-           Loop Library shelf - one draggable card per clip: the 8 Backing
-             Styles (always present) plus any Piano/Drum/Voice takes you
-             record. Drag a card onto a track lane below to load it there.
+           Loop Library shelf - one draggable card per clip: the 7 Backing
+             Styles (always present, each pre-loaded as a PAIR of cards - a
+             longer excerpt of the real recording auto-trimmed to a beat
+             boundary and resampled to the BPM slider, plus a "(Live)" card
+             for the untouched full recording at its own native speed) plus
+             any Piano/Drum/Voice takes you record. Drag a card onto a track
+             lane below to load it there, or use its own Play/Stop button
+             for a one-click launch onto the first free track.
            Tracks - a fixed set of independent loopers; each plays whatever
              clip is loaded on it, forever, at that clip's own length, with
              no shared timeline - drop a different clip on a track at any

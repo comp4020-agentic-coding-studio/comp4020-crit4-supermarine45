@@ -20,8 +20,12 @@
      4. Two loop pedals (piano + a live GarageBand-style drum Kit) that
         capture a take; finishing a recording hands it to the Loop Library
         below rather than looping it forever by itself.
-     5. Backing Styles: genre-correct 4-bar backing phrases (Big Band,
-        Swing, Samba, ...), pre-loaded as permanent Loop Library clips.
+     5. Backing Styles: each real licensed recording (Big Band, Swing,
+        Samba, ...) is pre-loaded as a PAIR of permanent Loop Library
+        clips - a long excerpt auto-trimmed to a beat boundary and
+        resampled live to the BPM slider, plus the untouched full
+        recording as a "(Live)" alternative that loops at its own native
+        speed instead.
      6. The Loop Library + Track Deck: a Loopy HD/GarageBand-style setup
         where every recording, Style, and voice take is a draggable clip
         card, and a fixed set of independent per-track loopers each play
@@ -427,158 +431,6 @@ function buildPad(freq, startTime) {
   };
 }
 
-// The following three builders are NOT lead Patches (not in PATCH_BUILDERS/
-// the Patch dropdown) - they're purpose-built ensemble timbres for the
-// Backing Styles below, chosen so each style's instrumentation is actually
-// recognizable as its genre rather than defaulting to a generic keys sound.
-
-// Brass Section - three sawtooths spread across a few cents of detune (a
-// real horn section's natural unison spread) through a peaking filter that
-// boosts ~1.5kHz, where a section's "bite" lives, with a near-instant
-// attack and a short, punchy decay built for stabs rather than sustain.
-function buildBrassSection(freq, startTime) {
-  const detuneCents = [-7, 0, 7];
-  const oscs = detuneCents.map((cents) => {
-    const o = ctx.createOscillator();
-    o.type = "sawtooth";
-    o.frequency.value = freq;
-    o.detune.value = cents;
-    return o;
-  });
-
-  const bite = ctx.createBiquadFilter();
-  bite.type = "peaking";
-  bite.frequency.value = 1500;
-  bite.Q.value = 0.9;
-  bite.gain.value = 8;
-
-  const ampEnv = ctx.createGain();
-  ampEnv.gain.setValueAtTime(0, startTime);
-  ampEnv.gain.linearRampToValueAtTime(0.4, startTime + 0.005); // near-instant stab attack
-  ampEnv.gain.exponentialRampToValueAtTime(0.001, startTime + 0.35); // short, punchy decay - a stab, not a held chord
-
-  const mix = ctx.createGain();
-  mix.gain.value = 1 / oscs.length;
-
-  oscs.forEach((o) => { o.connect(mix); o.start(startTime); });
-  mix.connect(bite);
-  bite.connect(ampEnv);
-  ampEnv.connect(preMaster);
-  oscs.forEach((o) => o.stop(startTime + 0.45));
-  oscs[0].onended = () => { oscs.forEach((o) => o.disconnect()); mix.disconnect(); bite.disconnect(); ampEnv.disconnect(); };
-
-  return {
-    release() {
-      // The stab is already decaying on its own; an early release just
-      // shortens whatever tail is left, same idea as Marimba.
-      const t = ctx.currentTime;
-      ampEnv.gain.cancelScheduledValues(t);
-      ampEnv.gain.setValueAtTime(ampEnv.gain.value, t);
-      ampEnv.gain.exponentialRampToValueAtTime(0.0001, t + 0.08);
-    },
-  };
-}
-
-// Nylon Guitar - a triangle body (rounder, darker than Pluck Synth's
-// sawtooth) plus a brief octave-up sine partial standing in for the
-// fingernail/pluck attack, through a lowpass filter that closes fast. For
-// Latin/Brazilian comping (Samba, Bossa Nova) rather than lead melodic play.
-function buildNylonGuitar(freq, startTime) {
-  const osc = ctx.createOscillator();
-  osc.type = "triangle";
-  osc.frequency.value = freq;
-
-  const pluckPartial = ctx.createOscillator();
-  pluckPartial.type = "sine";
-  pluckPartial.frequency.value = freq * 2;
-
-  const filter = ctx.createBiquadFilter();
-  filter.type = "lowpass";
-  filter.Q.value = 2;
-  filter.frequency.setValueAtTime(2200, startTime);
-  filter.frequency.exponentialRampToValueAtTime(500, startTime + 0.18);
-
-  const ampEnv = ctx.createGain();
-  ampEnv.gain.setValueAtTime(0, startTime);
-  ampEnv.gain.linearRampToValueAtTime(0.4, startTime + 0.008);
-  ampEnv.gain.exponentialRampToValueAtTime(0.001, startTime + 0.5);
-
-  const pluckEnv = ctx.createGain();
-  pluckEnv.gain.setValueAtTime(0.15, startTime);
-  pluckEnv.gain.exponentialRampToValueAtTime(0.001, startTime + 0.06);
-
-  osc.connect(filter);
-  pluckPartial.connect(pluckEnv);
-  pluckEnv.connect(filter);
-  filter.connect(ampEnv);
-  ampEnv.connect(preMaster);
-  osc.start(startTime);
-  pluckPartial.start(startTime);
-  osc.stop(startTime + 0.6);
-  pluckPartial.stop(startTime + 0.1);
-  osc.onended = () => { osc.disconnect(); pluckPartial.disconnect(); filter.disconnect(); ampEnv.disconnect(); pluckEnv.disconnect(); };
-
-  return {
-    release() {
-      const t = ctx.currentTime;
-      ampEnv.gain.cancelScheduledValues(t);
-      ampEnv.gain.setValueAtTime(ampEnv.gain.value, t);
-      ampEnv.gain.exponentialRampToValueAtTime(0.0001, t + 0.1);
-    },
-  };
-}
-
-// Organ Comp - two square-ish oscillators an octave apart (drawbar-style
-// body) with a fast sine LFO tremolo on the amplitude, standing in for a
-// rotating Leslie speaker - the classic reggae/ska rhythm "skank" chop.
-function buildOrganComp(freq, startTime) {
-  const osc1 = ctx.createOscillator();
-  osc1.type = "square";
-  osc1.frequency.value = freq;
-
-  const osc2 = ctx.createOscillator();
-  osc2.type = "square";
-  osc2.frequency.value = freq * 2.006; // slightly-sharp octave, drawbar-style width
-  const osc2Gain = ctx.createGain();
-  osc2Gain.gain.value = 0.3;
-
-  const tremolo = ctx.createOscillator();
-  tremolo.type = "sine";
-  tremolo.frequency.value = 6.5; // Leslie-ish speed
-  const tremoloDepth = ctx.createGain();
-  tremoloDepth.gain.value = 0.15;
-
-  const ampEnv = ctx.createGain();
-  ampEnv.gain.setValueAtTime(0, startTime);
-  ampEnv.gain.linearRampToValueAtTime(0.32, startTime + 0.01); // sharp, choppy attack
-  ampEnv.gain.linearRampToValueAtTime(0.22, startTime + 0.1);
-
-  tremolo.connect(tremoloDepth);
-  tremoloDepth.connect(ampEnv.gain); // modulates the envelope's own gain param
-
-  osc1.connect(ampEnv);
-  osc2.connect(osc2Gain);
-  osc2Gain.connect(ampEnv);
-  ampEnv.connect(preMaster);
-  osc1.start(startTime);
-  osc2.start(startTime);
-  tremolo.start(startTime);
-
-  return {
-    release() {
-      const t = ctx.currentTime;
-      const releaseTime = 0.06; // choppy, staccato release fits the skank
-      ampEnv.gain.cancelScheduledValues(t);
-      ampEnv.gain.setValueAtTime(ampEnv.gain.value, t);
-      ampEnv.gain.exponentialRampToValueAtTime(0.0001, t + releaseTime);
-      osc1.stop(t + releaseTime + 0.05);
-      osc2.stop(t + releaseTime + 0.05);
-      tremolo.stop(t + releaseTime + 0.05);
-      osc1.onended = () => { osc1.disconnect(); osc2.disconnect(); osc2Gain.disconnect(); tremolo.disconnect(); tremoloDepth.disconnect(); ampEnv.disconnect(); };
-    },
-  };
-}
-
 const PATCH_BUILDERS = {
   pluck: buildPluckSynth,
   epiano: buildElectricPiano,
@@ -704,6 +556,10 @@ function ensureEngine() {
   updateEffectSends();
   updateTempo();
   startScheduler();
+
+  // Every Backing Style's real recording can't be decoded/analyzed before
+  // ctx exists, so kick that off now rather than at page load.
+  STYLE_SOURCES.forEach(decodeStyleSource);
 }
 
 function createImpulseResponse(duration, decay) {
@@ -741,6 +597,15 @@ function updateTempo() {
   currentBpm = Number(bpmSlider.value);
   if (!ctx) return;
   delayNode.delayTime.setTargetAtTime(secondsPerStep(), ctx.currentTime, 0.05);
+  // Real-recording 'style' clips are resampled (not pitch-preserving-
+  // stretched) to the BPM slider via playbackRate, so every track currently
+  // playing one has to be retuned live whenever the slider moves.
+  tracks.forEach((track) => {
+    if (!track.audioSource) return;
+    const clip = findClip(track.clipId);
+    if (!clip || clip.kind !== "style" || !clip.nativeBpm) return;
+    track.audioSource.src.playbackRate.setTargetAtTime(currentBpm / clip.nativeBpm, ctx.currentTime, 0.05);
+  });
 }
 
 function secondsPerStep() {
@@ -1049,227 +914,7 @@ const LOOP_TRIGGERS = {
 };
 
 // ============================================================
-// 6. BACKING STYLES (ready-made auto-accompaniment)
-// ============================================================
-// Each Style is a self-contained 4-bar phrase (a real chord turnaround,
-// not a 2-bar vamp) with genre-correct instrumentation - Big Band leans on
-// the buildBrassSection ensemble timbre instead of piano/epiano, Samba and
-// Bossa Nova comp on buildNylonGuitar, Reggae skanks on buildOrganComp -
-// so each style is actually recognizable as its genre rather than
-// defaulting to the same generic keys sound. Instruments are fixed (not
-// tied to the user's `currentPatch`), reusing synth builders from §2 via
-// triggerVoice(). The phrase's final bar (`isLastBar`) adds an extra
-// `drumFill` for forward motion between repeats, and `bass` arrays include
-// a passing/walking tone (not just root/fifth) for more movement. Event
-// timing is a BEAT FRACTION of a bar (0..1), independent of the Step
-// grid's own 4-step resolution, so a style can use 16th-note syncopation
-// (Samba) or a triple feel (Waltz) that the step grid itself can't
-// express.
-//
-// Styles are no longer a single global on/off toggle - they're permanent
-// entries in the Loop Library (see §7) that can be dragged onto any track,
-// so more than one style can run at once, each on its own track with its
-// own independent phrase position (`localBar`).
-
-const CHORD_TYPES = {
-  maj: [0, 4, 7],
-  maj6: [0, 4, 7, 9],
-  maj7: [0, 4, 7, 11],
-  dom7: [0, 4, 7, 10],
-};
-
-// Resolves a chord tone (root + interval, both in semitones) to a
-// frequency, wrapping into the next octave whenever the sum passes 11 -
-// e.g. root=7 (G) + interval=11 (a maj7) = 18 -> semitone 6, one octave up.
-function chordFreq(root, interval, octave) {
-  const total = root + interval;
-  return noteFreq(total % 12, octave + Math.floor(total / 12));
-}
-
-// Row order matches DRUM_FUNCS: 0=Hat 1=Snare 2=Kick 3=Tom 4=OpenHat
-// 5=Clap 6=Rimshot 7=Cowbell.
-const STYLES = {
-  bigBand: {
-    label: "Big Band",
-    chordType: "dom7",
-    progression: [0, 9, 2, 7], // I - vi - ii - V turnaround
-    chordVoice: buildBrassSection, // brass section only - no piano/epiano anywhere in this style
-    bassVoice: buildUprightBass,
-    drum: [
-      { row: 2, beat: 0 }, { row: 0, beat: 0 },
-      { row: 0, beat: 0.25 }, { row: 6, beat: 0.25 },
-      { row: 0, beat: 0.5 }, { row: 2, beat: 0.5 },
-      { row: 0, beat: 0.75 }, { row: 6, beat: 0.75 },
-    ],
-    drumFill: [{ row: 3, beat: 0.75 }, { row: 1, beat: 0.875 }], // tom+snare fill into the turnaround
-    bass: [
-      { beat: 0, interval: 0, dur: 0.3 },
-      { beat: 0.5, interval: 7, dur: 0.2 },
-      { beat: 0.75, interval: 9, dur: 0.15 }, // passing tone walking to the next chord
-    ],
-    chord: [{ beat: 0.375, dur: 0.2 }, { beat: 0.875, dur: 0.2 }], // syncopated horn stabs
-  },
-  swing: {
-    label: "Swing",
-    chordType: "dom7",
-    progression: [0, 9, 2, 7],
-    chordVoice: buildElectricPiano, // rhythm-section piano comping is authentic here
-    bassVoice: buildUprightBass,
-    accentVoice: buildBrassSection, // occasional band-color stab layered over the comping
-    accentHits: [{ beat: 0.875, dur: 0.15 }],
-    drum: [
-      { row: 0, beat: 0 }, { row: 2, beat: 0 },
-      { row: 0, beat: 0.25 },
-      { row: 0, beat: 0.5 }, { row: 2, beat: 0.5 },
-      { row: 1, beat: 0.65 }, // laid-back, swung backbeat
-      { row: 0, beat: 0.75 },
-    ],
-    drumFill: [{ row: 1, beat: 0.75 }, { row: 6, beat: 0.9 }],
-    bass: [
-      { beat: 0, interval: 0, dur: 0.3 },
-      { beat: 0.5, interval: 7, dur: 0.2 },
-      { beat: 0.875, interval: 5, dur: 0.15 },
-    ],
-    chord: [{ beat: 0.25, dur: 0.25 }, { beat: 0.75, dur: 0.25 }],
-  },
-  samba: {
-    label: "Samba",
-    chordType: "maj7",
-    progression: [0, 5, 2, 7], // I - IV - ii - V
-    chordVoice: buildNylonGuitar,
-    bassVoice: buildUprightBass,
-    drum: [
-      { row: 0, beat: 0 }, { row: 4, beat: 0.125 }, { row: 0, beat: 0.25 }, { row: 4, beat: 0.375 },
-      { row: 0, beat: 0.5 }, { row: 4, beat: 0.625 }, { row: 0, beat: 0.75 }, { row: 4, beat: 0.875 },
-      { row: 2, beat: 0 }, { row: 2, beat: 0.375 }, { row: 2, beat: 0.625 },
-      { row: 6, beat: 0.25 }, { row: 6, beat: 0.75 }, { row: 7, beat: 0.5 },
-    ],
-    drumFill: [{ row: 6, beat: 0.5 }, { row: 6, beat: 0.625 }, { row: 6, beat: 0.75 }],
-    bass: [
-      { beat: 0, interval: 0, dur: 0.25 },
-      { beat: 0.375, interval: 0, dur: 0.2 },
-      { beat: 0.625, interval: 7, dur: 0.2 },
-    ],
-    chord: [{ beat: 0.25, dur: 0.15 }, { beat: 0.75, dur: 0.15 }],
-  },
-  bossaNova: {
-    label: "Bossa Nova",
-    chordType: "maj7",
-    progression: [0, 5, 2, 7],
-    chordVoice: buildNylonGuitar,
-    bassVoice: buildUprightBass,
-    drum: [
-      { row: 2, beat: 0 }, { row: 2, beat: 0.375 },
-      { row: 6, beat: 0.25 }, { row: 6, beat: 0.75 },
-      { row: 0, beat: 0.5 },
-    ],
-    drumFill: [{ row: 6, beat: 0.875 }],
-    bass: [
-      { beat: 0, interval: 0, dur: 0.3 },
-      { beat: 0.5, interval: 7, dur: 0.3 },
-    ],
-    chord: [{ beat: 0.25, dur: 0.3 }, { beat: 0.625, dur: 0.3 }],
-  },
-  elevator: {
-    label: "Elevator Music",
-    chordType: "maj7",
-    progression: [0, 5, 9, 7], // I - IV - vi - V
-    chordVoice: buildPad,
-    bassVoice: buildUprightBass,
-    drum: [{ row: 0, beat: 0 }, { row: 0, beat: 0.5 }, { row: 2, beat: 0 }, { row: 1, beat: 0.5 }],
-    drumFill: [{ row: 6, beat: 0.5 }],
-    bass: [{ beat: 0, interval: 0, dur: 0.8 }],
-    chord: [{ beat: 0, dur: 0.9 }],
-  },
-  latin: {
-    label: "Latin Cha-Cha",
-    chordType: "dom7",
-    progression: [0, 7, 0, 5], // I - V - I - IV
-    chordVoice: buildMarimba,
-    bassVoice: buildUprightBass,
-    drum: [
-      { row: 2, beat: 0 }, { row: 2, beat: 0.5 },
-      { row: 6, beat: 0.75 }, { row: 7, beat: 0.875 },
-      { row: 0, beat: 0 }, { row: 0, beat: 0.25 }, { row: 0, beat: 0.5 }, { row: 0, beat: 0.75 },
-    ],
-    drumFill: [{ row: 7, beat: 0.625 }, { row: 7, beat: 0.75 }, { row: 7, beat: 0.875 }],
-    bass: [
-      { beat: 0, interval: 0, dur: 0.25 },
-      { beat: 0.5, interval: 0, dur: 0.25 },
-      { beat: 0.875, interval: 2, dur: 0.15 },
-    ],
-    chord: [{ beat: 0.75, dur: 0.1 }, { beat: 0.875, dur: 0.1 }],
-  },
-  reggae: {
-    label: "Reggae",
-    chordType: "dom7",
-    progression: [0, 5, 7, 5], // I - IV - V - IV
-    chordVoice: buildOrganComp,
-    bassVoice: buildUprightBass,
-    drum: [
-      { row: 2, beat: 0.5 }, { row: 1, beat: 0.5 }, // one-drop: kick+snare together
-      { row: 0, beat: 0 }, { row: 0, beat: 0.25 }, { row: 0, beat: 0.5 }, { row: 0, beat: 0.75 },
-    ],
-    drumFill: [{ row: 3, beat: 0.875 }],
-    bass: [
-      { beat: 0.5, interval: 0, dur: 0.5 },
-      { beat: 0.875, interval: 10, dur: 0.15 },
-    ],
-    chord: [{ beat: 0.25, dur: 0.15 }, { beat: 0.75, dur: 0.15 }], // the classic offbeat "skank"
-  },
-  waltz: {
-    label: "Waltz",
-    chordType: "maj",
-    progression: [0, 9, 5, 7], // I - vi - IV - V
-    chordVoice: buildPad,
-    bassVoice: buildUprightBass,
-    drum: [{ row: 2, beat: 0 }, { row: 6, beat: 0.333 }, { row: 6, beat: 0.667 }],
-    drumFill: [{ row: 2, beat: 0.667 }],
-    bass: [{ beat: 0, interval: 0, dur: 0.5 }],
-    chord: [{ beat: 0.333, dur: 0.3 }, { beat: 0.667, dur: 0.3 }], // oom-pah-pah
-  },
-};
-
-// Schedules one bar of a style's phrase for whichever track has it loaded.
-// `localBar` is that track's own position within the phrase (see
-// scheduleTracksBar in §7) rather than the global bar count, since two
-// tracks can run the same or different styles fully out of phase with
-// each other.
-function scheduleStylePatternBar(styleId, localBar, time) {
-  const style = STYLES[styleId];
-  const barDuration = STEP_COUNT * secondsPerStep();
-  const isLastBar = localBar === style.progression.length - 1;
-  const chordRoot = style.progression[localBar % style.progression.length];
-  const chordIntervals = CHORD_TYPES[style.chordType];
-
-  style.drum.forEach(({ row, beat }) => {
-    const t = time + beat * barDuration;
-    DRUM_FUNCS[row](t);
-    scheduleVisualFlash(t, () => flashKitPad(row));
-  });
-  if (isLastBar && style.drumFill) {
-    style.drumFill.forEach(({ row, beat }) => {
-      const t = time + beat * barDuration;
-      DRUM_FUNCS[row](t);
-      scheduleVisualFlash(t, () => flashKitPad(row));
-    });
-  }
-  style.bass.forEach(({ beat, interval, dur }) => {
-    triggerVoice(style.bassVoice, chordFreq(chordRoot, interval, 3), time + beat * barDuration, dur);
-  });
-  style.chord.forEach(({ beat, dur }) => {
-    const t = time + beat * barDuration;
-    chordIntervals.forEach((iv) => triggerVoice(style.chordVoice, chordFreq(chordRoot, iv, 4), t, dur));
-  });
-  if (style.accentVoice && style.accentHits) {
-    style.accentHits.forEach(({ beat, dur }) => {
-      triggerVoice(style.accentVoice, chordFreq(chordRoot, 0, 4), time + beat * barDuration, dur);
-    });
-  }
-}
-
-// ============================================================
-// 7. LOOP LIBRARY + TRACKS (Loopy HD-style independent loopers)
+// 6/7. LOOP LIBRARY + TRACKS (Loopy HD-style independent loopers)
 // ============================================================
 // Every recorded take (piano, drum Kit, voice) and every Backing Style is
 // a `loopLibrary` clip - inert data that never plays by itself. `tracks`
@@ -1281,6 +926,20 @@ function scheduleStylePatternBar(styleId, localBar, time) {
 // what lets a 2-bar drum loop, a 4-bar Style, and an 8-bar piano take all
 // run at once, and lets the user "arrange" a performance simply by
 // swapping what's loaded on each track while playing.
+//
+// Backing Styles are no longer synthesized: each is a real licensed
+// recording (see samples/CREDITS.md), decoded once and offered as two
+// clips. The 'style' clip is a long excerpt, automatically analyzed for its
+// native tempo and a clean loop point (see analyzeAndTrimLoop below), then
+// played back through a `playbackRate` of currentBpm/nativeBpm - genuine
+// speed+pitch resampling, exactly like changing the speed on a turntable.
+// Since that ratio is recomputed from the live BPM slider on every play and
+// re-tuned live by updateTempo() whenever the slider moves (see below), the
+// resulting audible tempo always tracks the slider (accuracy of the
+// detected nativeBpm only affects pitch/pace relative to the *original*
+// recording, not whether it follows the slider). The 'sample' clip is the
+// same recording untouched, looping at its own native speed as a "hear it
+// as-is" alternative to the resampled excerpt.
 
 let nextLoopId = 1;
 let nextTrackId = 1;
@@ -1288,33 +947,76 @@ let drumClipCount = 0;
 let pianoClipCount = 0;
 let voiceClipCount = 0;
 
-const CLIP_COLORS = { piano: "var(--cyan)", drum: "var(--coral)", style: "var(--violet)", voice: "var(--lime)" };
+const CLIP_COLORS = { piano: "var(--cyan)", drum: "var(--coral)", style: "var(--violet)", sample: "var(--gold)", voice: "var(--lime)" };
 
-// { id, kind: 'piano'|'drum'|'style'|'voice', name, color, lengthBars,
-//   pattern? (piano/drum), styleId? (style), audioBuffer? (voice) }
+// How many beats analyzeAndTrimLoop cuts into the resampled 'style' loop -
+// long enough to cover several musical phrases so the loop repeats far less
+// obviously than a single-bar excerpt would.
+const LOOP_BEATS = 32;
+
+// { id, kind: 'piano'|'drum'|'style'|'sample'|'voice', name, color,
+//   lengthBars (null for 'style'/'sample', which loop by their own buffer's
+//   duration, not a bar count),
+//   pattern? (piano/drum), audioBuffer? (voice/sample),
+//   url/audioBuffer/loopBuffer/nativeBpm/status? (style) }
 const loopLibrary = [];
 
-// The 8 Backing Styles are always-available library clips - replacing the
-// old single global style toggle. Nothing stops two different styles (or
-// the same style twice) from running on two different tracks at once.
-Object.entries(STYLES).forEach(([styleId, style]) => {
-  loopLibrary.push({
+// Each Backing Style is decoded from one real licensed recording (see
+// samples/CREDITS.md) and surfaces as TWO Loop Library clips sharing that
+// same decode: a 'style' clip - a short excerpt auto-trimmed to a beat
+// boundary (see analyzeAndTrimLoop) and resampled live to the BPM slider via
+// playbackRate - and a 'sample' clip, the untouched full recording looping
+// at its own native speed, offered as an alternative for when the raw
+// recording (not a resampled/trimmed excerpt of it) is what's wanted.
+// `audioBuffer`/`loopBuffer`/`nativeBpm` all start null and are filled in
+// once by decodeStyleSource, called from ensureEngine() the first time an
+// AudioContext exists. `status` drives each card's length/BPM label:
+// "pending" -> "Loading...", "ready" -> the detected BPM or full duration,
+// "error" -> "Unavailable".
+const STYLE_SOURCES = [
+  { id: "bigBand", name: "Big Band", url: "./samples/big-band-main-stem.ogg" },
+  { id: "swing", name: "Swing", url: "./samples/swing-walk-that-dog.ogg" },
+  { id: "samba", name: "Samba", url: "./samples/samba-batucada.ogg" },
+  { id: "bossaNova", name: "Bossa Nova", url: "./samples/bossa-nova-background-music.ogg" },
+  { id: "elevator", name: "Elevator Music", url: "./samples/elevator-local-forecast.mp3" },
+  { id: "latin", name: "Latin Cha-Cha", url: "./samples/latin-no-frills-salsa.mp3" },
+  { id: "reggae", name: "Reggae", url: "./samples/reggae-tea-roots.oga" },
+];
+STYLE_SOURCES.forEach((source) => {
+  source.styleClip = {
     id: nextLoopId++,
     kind: "style",
-    name: style.label,
+    name: source.name,
     color: CLIP_COLORS.style,
-    lengthBars: style.progression.length,
-    styleId,
-  });
+    lengthBars: null,
+    audioBuffer: null,
+    loopBuffer: null,
+    nativeBpm: null,
+    status: "pending",
+  };
+  source.liveClip = {
+    id: nextLoopId++,
+    kind: "sample",
+    name: `${source.name} (Live)`,
+    color: CLIP_COLORS.sample,
+    lengthBars: null,
+    audioBuffer: null,
+    status: "pending",
+  };
+  loopLibrary.push(source.styleClip, source.liveClip);
 });
 
-// { id, name, clipId, pendingClipId, startBar, muted }
+// { id, name, clipId, pendingClipId, startBar, muted, audioSource, audioStartTime }
 const tracks = [];
 const MAX_TRACKS = 8;
 
 function addTrack() {
   if (tracks.length >= MAX_TRACKS) return null;
-  const track = { id: nextTrackId++, name: `Track ${tracks.length + 1}`, clipId: null, pendingClipId: null, startBar: null, muted: false };
+  const track = {
+    id: nextTrackId++, name: `Track ${tracks.length + 1}`, clipId: null, pendingClipId: null, startBar: null, muted: false,
+    audioSource: null, // { src, gain } - only set while a 'style' or 'sample' clip is live on this track
+    audioStartTime: null,
+  };
   tracks.push(track);
   return track;
 }
@@ -1339,6 +1041,7 @@ function loadClipOntoTrack(trackId, clipId) {
 function clearTrack(trackId) {
   const track = findTrack(trackId);
   if (!track) return;
+  stopTrackAudio(track);
   track.clipId = null;
   track.pendingClipId = null;
   track.startBar = null;
@@ -1349,6 +1052,15 @@ function toggleTrackMute(trackId) {
   const track = findTrack(trackId);
   if (!track) return;
   track.muted = !track.muted;
+  // Every other kind is re-triggered (or not) per bar in scheduleTracksBar,
+  // so muting them is just "stop scheduling new notes." A 'style'/'sample'
+  // clip is one continuously-playing source with no per-bar re-trigger to
+  // skip, so its own gain has to be ramped directly instead.
+  if (track.audioSource) {
+    const g = track.audioSource.gain.gain;
+    g.cancelScheduledValues(ctx.currentTime);
+    g.setTargetAtTime(track.muted ? 0 : 1, ctx.currentTime, 0.01);
+  }
   refreshTrackDeckUI();
 }
 
@@ -1362,6 +1074,194 @@ function playVoiceClip(clip, time) {
   src.start(time);
 }
 
+// A 'style' clip's `loopBuffer` is a short excerpt trimmed to an exact
+// number of beats at its own detected `nativeBpm` (see analyzeAndTrimLoop) -
+// it can't be re-triggered bar-by-bar like a synthesized clip, so it plays
+// as a single self-looping AudioBufferSourceNode through a dedicated
+// GainNode (so toggleTrackMute can ramp it independently of every other
+// track), with `playbackRate` continuously resampling it to the live BPM
+// slider (see updateTempo). Still connects to preMaster, so Reverb/Delay
+// apply the same way.
+function playStyleClipOnTrack(track, clip, time) {
+  const src = ctx.createBufferSource();
+  src.buffer = clip.loopBuffer;
+  src.loop = true;
+  src.playbackRate.value = currentBpm / clip.nativeBpm;
+  const gain = ctx.createGain();
+  gain.gain.value = track.muted ? 0 : 1;
+  src.connect(gain);
+  gain.connect(preMaster);
+  src.start(time);
+  track.audioSource = { src, gain };
+  track.audioStartTime = time;
+}
+
+// A 'sample' clip is the untouched full recording behind a 'style' clip,
+// offered as an alternative to the resampled excerpt - it loops at its own
+// native speed (playbackRate stays at 1) and is deliberately NOT retuned by
+// updateTempo, since the point of choosing it is to hear the real recording
+// as-is rather than a BPM-matched resample of it.
+function playSampleClipOnTrack(track, clip, time) {
+  const src = ctx.createBufferSource();
+  src.buffer = clip.audioBuffer;
+  src.loop = true;
+  const gain = ctx.createGain();
+  gain.gain.value = track.muted ? 0 : 1;
+  src.connect(gain);
+  gain.connect(preMaster);
+  src.start(time);
+  track.audioSource = { src, gain };
+  track.audioStartTime = time;
+}
+
+function stopTrackAudio(track) {
+  if (!track.audioSource) return;
+  const { src, gain } = track.audioSource;
+  try { src.stop(); } catch { /* already stopped */ }
+  src.disconnect();
+  gain.disconnect();
+  track.audioSource = null;
+  track.audioStartTime = null;
+}
+
+// Downmixes an AudioBuffer to a single mono Float32Array, averaging all
+// channels - every analysis step below only needs overall energy/timing,
+// not stereo detail.
+function downmixToMono(audioBuffer) {
+  const length = audioBuffer.length;
+  const mono = new Float32Array(length);
+  const channels = audioBuffer.numberOfChannels;
+  for (let c = 0; c < channels; c++) {
+    const data = audioBuffer.getChannelData(c);
+    for (let i = 0; i < length; i++) mono[i] += data[i] / channels;
+  }
+  return mono;
+}
+
+// Automatic tempo + loop-point detection, no external libraries - this is
+// necessarily best-effort (real recordings have intros, rubato, fills) and
+// can't be verified by ear on the agent's end; if a card's detected BPM or
+// loop point sounds wrong, that's expected, and worth reporting so the
+// analysis parameters below (the BPM prior center, the safe-zone fractions)
+// can be retuned.
+function analyzeAndTrimLoop(audioBuffer) {
+  const sr = audioBuffer.sampleRate;
+  const mono = downmixToMono(audioBuffer);
+
+  // 1. Short-time RMS energy envelope, 512-sample hop.
+  const hop = 512;
+  const frameCount = Math.floor(mono.length / hop);
+  const energy = new Float32Array(frameCount);
+  for (let f = 0; f < frameCount; f++) {
+    let sum = 0;
+    const start = f * hop;
+    for (let i = 0; i < hop; i++) { const s = mono[start + i]; sum += s * s; }
+    energy[f] = Math.sqrt(sum / hop);
+  }
+
+  // 2. Positive-flux onset detection function - only frame-to-frame energy
+  // increases count as "onsets," since decays carry no timing information.
+  const onset = new Float32Array(frameCount);
+  for (let f = 1; f < frameCount; f++) onset[f] = Math.max(0, energy[f] - energy[f - 1]);
+
+  // 3. Autocorrelate the onset function over the 60-200 BPM lag range,
+  // weighting scores with a Gaussian prior centered on 112 BPM to bias away
+  // from octave errors (e.g. reading a busy samba as double-time).
+  const framesPerSec = sr / hop;
+  const minLag = Math.round(framesPerSec * 60 / 200);
+  const maxLag = Math.round(framesPerSec * 60 / 60);
+  let bestLag = minLag;
+  let bestScore = -Infinity;
+  const priorBpm = 112;
+  const priorWidth = 40;
+  for (let lag = minLag; lag <= maxLag; lag++) {
+    let corr = 0;
+    for (let f = 0; f + lag < frameCount; f++) corr += onset[f] * onset[f + lag];
+    const bpmAtLag = (framesPerSec * 60) / lag;
+    const prior = Math.exp(-((bpmAtLag - priorBpm) ** 2) / (2 * priorWidth * priorWidth));
+    const score = corr * prior;
+    if (score > bestScore) { bestScore = score; bestLag = lag; }
+  }
+
+  // 4. Fold the winning lag into a musically plausible 70-180 BPM range.
+  let bpm = (framesPerSec * 60) / bestLag;
+  while (bpm < 70) bpm *= 2;
+  while (bpm > 180) bpm /= 2;
+
+  // 5. Pick a loop start: search a safe zone (skip the first ~12% and last
+  // ~15%, avoiding intros/outros/fades) for the onset-function peak closest
+  // to a detected beat boundary - a best-effort downbeat proxy.
+  const safeStart = Math.floor(frameCount * 0.12);
+  const safeEnd = Math.floor(frameCount * 0.85);
+  let peakFrame = safeStart;
+  let peakVal = -Infinity;
+  for (let f = safeStart; f < safeEnd; f++) {
+    if (onset[f] > peakVal) { peakVal = onset[f]; peakFrame = f; }
+  }
+  const loopStartSec = (peakFrame * hop) / sr;
+
+  // 6. Trim a 32-beat (8-bar) window from loopStartSec into a new, smaller
+  // buffer, with a short linear fade-in/out to hide the loop seam. 32 beats
+  // covers several musical phrases rather than a single lick, so the loop
+  // repeats far less obviously than a 4-beat excerpt would.
+  const beatDurationSec = 60 / bpm;
+  const loopDurationSec = Math.min(LOOP_BEATS * beatDurationSec, audioBuffer.duration - loopStartSec);
+  const startSample = Math.floor(loopStartSec * sr);
+  const frameLength = Math.max(1, Math.floor(loopDurationSec * sr));
+  const loopBuffer = ctx.createBuffer(audioBuffer.numberOfChannels, frameLength, sr);
+  const fadeSamples = Math.min(Math.floor(sr * 0.015), Math.floor(frameLength / 4));
+  for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
+    const src = audioBuffer.getChannelData(c);
+    const dst = loopBuffer.getChannelData(c);
+    for (let i = 0; i < frameLength; i++) {
+      let sample = src[startSample + i] || 0;
+      if (i < fadeSamples) sample *= i / fadeSamples;
+      else if (i >= frameLength - fadeSamples) sample *= (frameLength - i) / fadeSamples;
+      dst[i] = sample;
+    }
+  }
+
+  return { loopBuffer, nativeBpm: bpm };
+}
+
+function formatClipDuration(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+// Fetches and decodes a Backing Style source ONCE, then feeds that single
+// decode into both of its Loop Library clips: the 'style' clip (trimmed +
+// analyzed via analyzeAndTrimLoop) and the 'sample' clip (the full decode,
+// untouched). Can't run before ctx exists, so it's called from
+// ensureEngine() rather than at page load; updates each clip's
+// already-rendered Loop Library card in place once ready.
+function decodeStyleSource(source) {
+  const { styleClip, liveClip } = source;
+  const lenEl = (clip) => clip.cardEl?.querySelector(".loop-card-len");
+  fetch(source.url)
+    .then((res) => res.arrayBuffer())
+    .then((buf) => ctx.decodeAudioData(buf))
+    .then((audioBuffer) => {
+      liveClip.audioBuffer = audioBuffer;
+      liveClip.status = "ready";
+      if (lenEl(liveClip)) lenEl(liveClip).textContent = formatClipDuration(audioBuffer.duration);
+
+      styleClip.audioBuffer = audioBuffer;
+      const { loopBuffer, nativeBpm } = analyzeAndTrimLoop(audioBuffer);
+      styleClip.loopBuffer = loopBuffer;
+      styleClip.nativeBpm = nativeBpm;
+      styleClip.status = "ready";
+      if (lenEl(styleClip)) lenEl(styleClip).textContent = `${Math.round(nativeBpm)} BPM`;
+    })
+    .catch(() => {
+      liveClip.status = "error";
+      styleClip.status = "error";
+      if (lenEl(liveClip)) lenEl(liveClip).textContent = "Unavailable";
+      if (lenEl(styleClip)) lenEl(styleClip).textContent = "Unavailable";
+    });
+}
+
 // Called once per bar (see scheduleStep()'s step===0 branch below) - the
 // direct replacement for the old pianoLoopPedal.schedule/
 // drumLoopPedal.schedule/scheduleStyleBar calls, now covering an arbitrary
@@ -1370,17 +1270,28 @@ function playVoiceClip(clip, time) {
 function scheduleTracksBar(barIdx, time) {
   tracks.forEach((track) => {
     if (track.pendingClipId !== null) {
-      track.clipId = track.pendingClipId;
-      track.pendingClipId = null;
-      track.startBar = barIdx;
+      const pendingClip = findClip(track.pendingClipId);
+      // A 'style'/'sample' clip can't be launched before its audio has
+      // finished decoding (and, for 'style', analyzing) - if it's not ready
+      // yet, leave pendingClipId set and try again next bar rather than
+      // promoting to a clip with no buffer to play.
+      const ready = !pendingClip
+        || (pendingClip.kind !== "style" && pendingClip.kind !== "sample")
+        || (pendingClip.kind === "style" ? pendingClip.loopBuffer : pendingClip.audioBuffer);
+      if (ready) {
+        stopTrackAudio(track);
+        track.clipId = track.pendingClipId;
+        track.pendingClipId = null;
+        track.startBar = barIdx;
+        if (pendingClip?.kind === "style") playStyleClipOnTrack(track, pendingClip, time);
+        else if (pendingClip?.kind === "sample") playSampleClipOnTrack(track, pendingClip, time);
+      }
     }
     if (track.clipId === null || track.muted) return;
     const clip = findClip(track.clipId);
-    if (!clip) return;
+    if (!clip || clip.kind === "style" || clip.kind === "sample") return; // already playing continuously - nothing to (re)schedule per bar
     const localBar = (barIdx - track.startBar) % clip.lengthBars;
-    if (clip.kind === "style") {
-      scheduleStylePatternBar(clip.styleId, localBar, time);
-    } else if (localBar === 0 && (clip.kind === "piano" || clip.kind === "drum")) {
+    if (localBar === 0 && (clip.kind === "piano" || clip.kind === "drum")) {
       clip.pattern.forEach((ev) => LOOP_TRIGGERS[clip.kind](ev.payload, time + ev.offsetSec, ev.duration));
     } else if (clip.kind === "voice" && localBar === 0) {
       playVoiceClip(clip, time);
@@ -1908,14 +1819,55 @@ patchSelect.addEventListener("change", () => {
 
 const trackLaneEls = new Map(); // trackId -> lane element
 const trackProgressEls = new Map(); // trackId -> progress-bar fill element
+const clipCardEls = new Map(); // clipId -> loop-card element, for syncing the Play/Stop button
 
 function addLoopCard(clip) {
   const card = document.createElement("div");
   card.className = `loop-card kind-${clip.kind}`;
   card.style.setProperty("--card-color", clip.color);
-  card.innerHTML = `<span class="loop-card-name">${clip.name}</span><span class="loop-card-len">${clip.lengthBars} bar${clip.lengthBars === 1 ? "" : "s"}</span>`;
+  // 'style'/'sample' clips have no bar length (they're real recordings,
+  // decoded/analyzed lazily once ctx exists - see decodeStyleSource) so the
+  // length label shows a loading/BPM/duration/error state instead of "N bars".
+  const lenLabel = clip.kind === "style"
+    ? (clip.status === "ready" ? `${Math.round(clip.nativeBpm)} BPM` : clip.status === "error" ? "Unavailable" : "Loading…")
+    : clip.kind === "sample"
+    ? (clip.status === "ready" ? formatClipDuration(clip.audioBuffer.duration) : clip.status === "error" ? "Unavailable" : "Loading…")
+    : `${clip.lengthBars} bar${clip.lengthBars === 1 ? "" : "s"}`;
+  card.innerHTML = `
+    <div class="loop-card-top">
+      <button type="button" class="loop-card-playbtn" title="Play/Stop">&#9654;</button>
+      <span class="loop-card-name">${clip.name}</span>
+    </div>
+    <span class="loop-card-len">${lenLabel}</span>
+  `;
+  const playBtn = card.querySelector(".loop-card-playbtn");
+  playBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+  playBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleClipPlayback(clip.id);
+  });
   loopShelfEl.appendChild(card);
+  clip.cardEl = card;
+  clipCardEls.set(clip.id, card);
   makeDraggable(card, clip.id);
+}
+
+// Direct Play/Stop control for a Loop Library card, as an alternative to
+// dragging it onto a track. Loading still goes through loadClipOntoTrack,
+// so a click-started clip gets the same quantized-to-next-bar launch as a
+// dragged one; stopping is immediate, matching clearTrack's existing
+// asymmetry (see clearTrack above).
+function toggleClipPlayback(clipId) {
+  markStarted();
+  ensureEngine();
+  const playing = tracks.find((t) => t.clipId === clipId || t.pendingClipId === clipId);
+  if (playing) {
+    clearTrack(playing.id);
+    return;
+  }
+  const target = firstEmptyTrack();
+  if (!target) return; // no free track - same no-op behavior as a drag with no drop target
+  loadClipOntoTrack(target.id, clipId);
 }
 
 // Pointer-event drag-and-drop: pointerdown spawns a floating ghost that
@@ -1977,6 +1929,7 @@ function buildTrackLane(track) {
 }
 
 function refreshTrackDeckUI() {
+  const playingClipIds = new Set();
   tracks.forEach((track) => {
     const lane = trackLaneEls.get(track.id);
     if (!lane) return;
@@ -1989,6 +1942,16 @@ function refreshTrackDeckUI() {
     lane.classList.toggle("pending", !!pending);
     lane.classList.toggle("muted", track.muted);
     lane.querySelector(".track-mute-btn").classList.toggle("active", track.muted);
+    if (track.clipId !== null) playingClipIds.add(track.clipId);
+    if (track.pendingClipId !== null) playingClipIds.add(track.pendingClipId);
+  });
+  // Every card's Play/Stop button reflects whether its clip is currently
+  // loaded (playing or pending) on any track, not just its own drag target.
+  clipCardEls.forEach((card, clipId) => {
+    const active = playingClipIds.has(clipId);
+    const btn = card.querySelector(".loop-card-playbtn");
+    btn.classList.toggle("active", active);
+    btn.innerHTML = active ? "&#9632;" : "&#9654;";
   });
 }
 
@@ -2013,8 +1976,24 @@ function animateTrackProgress() {
     if (track.clipId === null || !ctx) { fill.style.width = "0%"; return; }
     const clip = findClip(track.clipId);
     if (!clip) { fill.style.width = "0%"; return; }
-    const elapsedBars = (barIndex - track.startBar) + Math.min(1, Math.max(0, (ctx.currentTime - barStartTime) / barDuration));
-    const progress = (elapsedBars % clip.lengthBars) / clip.lengthBars;
+    let progress;
+    if (clip.kind === "style") {
+      // A style clip's cycle length is its trimmed loopBuffer's own real
+      // seconds (stretched/compressed live by playbackRate), not lengthBars,
+      // so its progress is measured against wall-clock time since it was
+      // launched instead of the bar-count math below.
+      if (!clip.loopBuffer || track.audioStartTime === null) { fill.style.width = "0%"; return; }
+      const cycleDuration = clip.loopBuffer.duration / (track.audioSource ? track.audioSource.src.playbackRate.value : 1);
+      progress = ((ctx.currentTime - track.audioStartTime) % cycleDuration) / cycleDuration;
+    } else if (clip.kind === "sample") {
+      // A sample clip loops at its own native speed (playbackRate stays 1),
+      // so its cycle length is simply its full recording's own duration.
+      if (!clip.audioBuffer || track.audioStartTime === null) { fill.style.width = "0%"; return; }
+      progress = ((ctx.currentTime - track.audioStartTime) % clip.audioBuffer.duration) / clip.audioBuffer.duration;
+    } else {
+      const elapsedBars = (barIndex - track.startBar) + Math.min(1, Math.max(0, (ctx.currentTime - barStartTime) / barDuration));
+      progress = (elapsedBars % clip.lengthBars) / clip.lengthBars;
+    }
     fill.style.width = `${Math.max(0, Math.min(1, progress)) * 100}%`;
   });
   requestAnimationFrame(animateTrackProgress);
