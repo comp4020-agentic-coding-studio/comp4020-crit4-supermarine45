@@ -246,6 +246,17 @@ html, body {
   position: relative;
   border-radius: 14px;
   overflow: hidden;
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  transition: outline-color 0.1s ease;
+}
+
+#center-stage.drop-armed {
+  outline-color: #4a5578;
+}
+
+#center-stage.drop-hover {
+  outline-color: var(--lead-color);
 }
 
 #constellation-canvas {

@@ -1529,6 +1529,7 @@ const drumModeKitBtn = document.getElementById("drum-mode-kit");
 const drumLoopRecBtn = document.getElementById("drum-loop-rec");
 const drumLoopPlayBtn = document.getElementById("drum-loop-play");
 const drumLoopClearBtn = document.getElementById("drum-loop-clear");
+const centerStageEl = document.getElementById("center-stage");
 const canvas = document.getElementById("constellation-canvas");
 const cctx = canvas.getContext("2d");
 const scaleSelect = document.getElementById("scale-select");
@@ -2020,8 +2021,11 @@ function toggleClipPlayback(clipId) {
 // Pointer-event drag-and-drop: pointerdown spawns a floating ghost that
 // follows the pointer; pointerup asks whatever's under the pointer (via
 // elementFromPoint, since the ghost itself would otherwise report as the
-// drop target) whether it's a track lane, and if so loads the dragged clip
-// there.
+// drop target) whether it's a track lane or the main center-stage window
+// (canvas + piano), and loads the dragged clip accordingly - a track lane
+// targets that exact track, while the center-stage is a bigger, coarser
+// target that behaves like clicking a card's own Play button: first empty
+// track, no-op if none free.
 function makeDraggable(cardEl, clipId) {
   cardEl.addEventListener("pointerdown", (e) => {
     e.preventDefault();
@@ -2034,17 +2038,27 @@ function makeDraggable(cardEl, clipId) {
     document.body.appendChild(ghost);
     positionGhost(ghost, e.clientX, e.clientY);
     trackLaneEls.forEach((el) => el.classList.add("drop-armed"));
+    centerStageEl.classList.add("drop-armed");
 
     const move = (ev) => {
       positionGhost(ghost, ev.clientX, ev.clientY);
-      const hit = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(".track-lane");
-      trackLaneEls.forEach((el) => el.classList.toggle("drop-hover", el === hit));
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const hitLane = el?.closest(".track-lane");
+      trackLaneEls.forEach((laneEl) => laneEl.classList.toggle("drop-hover", laneEl === hitLane));
+      centerStageEl.classList.toggle("drop-hover", !hitLane && !!el?.closest("#center-stage"));
     };
     const up = (ev) => {
-      const hit = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(".track-lane");
-      if (hit) loadClipOntoTrack(Number(hit.dataset.trackId), clipId);
+      const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      const hitLane = el?.closest(".track-lane");
+      if (hitLane) {
+        loadClipOntoTrack(Number(hitLane.dataset.trackId), clipId);
+      } else if (el?.closest("#center-stage")) {
+        const target = firstEmptyTrack();
+        if (target) loadClipOntoTrack(target.id, clipId);
+      }
       ghost.remove();
-      trackLaneEls.forEach((el) => el.classList.remove("drop-armed", "drop-hover"));
+      trackLaneEls.forEach((laneEl) => laneEl.classList.remove("drop-armed", "drop-hover"));
+      centerStageEl.classList.remove("drop-armed", "drop-hover");
       window.removeEventListener("pointermove", move);
       window.removeEventListener("pointerup", up);
     };
