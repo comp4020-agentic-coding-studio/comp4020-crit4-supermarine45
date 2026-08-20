@@ -737,3 +737,75 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 0 8px var(--cyan);
   cursor: pointer;
 }
+
+/* ---------- Mobile layout (marked viewport: 390x844) ----------
+   The desktop grid can't survive a 390px-wide viewport - two 260px
+   sidebars alone exceed it. Below 900px the dashboard becomes a vertical
+   stack instead, with the center-stage (the actual instrument: the
+   constellation canvas + piano) pulled to the top so a phone-sized
+   visitor sees something to play immediately, matching desktop's "the
+   opening screen invites the first sound." Everything below it becomes
+   reachable by scrolling; html/body swap their desktop overflow:hidden
+   for vertical scroll only. */
+@media (max-width: 900px) {
+  html, body {
+    height: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .dashboard {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  #center-stage {
+    order: -1;
+    width: 100%;
+    height: 420px;
+    flex: none;
+  }
+
+  #drum-section {
+    width: 100%;
+    height: 440px;
+    flex: none;
+  }
+
+  #controls {
+    width: 100%;
+    flex: none;
+  }
+
+  #track-deck {
+    width: 100%;
+    flex: none;
+  }
+
+  #track-deck-transport {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  #track-deck-transport .control.horizontal {
+    max-width: none;
+    flex: 1 1 160px;
+  }
+
+  #track-list-wrap {
+    height: 240px;
+  }
+
+  #piano-toolbar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  #octave-control {
+    width: auto;
+    flex: 1 1 140px;
+  }
+}
