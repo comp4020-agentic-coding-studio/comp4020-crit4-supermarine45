@@ -156,6 +156,10 @@
              no shared timeline - drop a different clip on a track at any
              time to change what that track plays. Mute (M) silences a
              track without unloading it; Clear (x) empties it immediately.
+             Reset empties every track at once, the same as clicking each
+             track's own Clear - the Loop Library shelf (built-in Styles and
+             any recorded takes) is untouched, so everything stays available
+             to drag back onto a track.
          Cards/lanes are generated in app.js. -->
     <section id="track-deck">
       <div id="track-deck-transport">
@@ -177,6 +181,7 @@
       <div id="track-list-wrap">
         <div id="track-list"></div>
         <button id="add-track-btn" class="loop-btn" type="button">+ Track</button>
+        <button id="reset-tracks-btn" class="loop-btn" type="button" title="Empty every track">Reset</button>
       </div>
     </section>
 

@@ -1050,18 +1050,22 @@ let voiceClipCount = 0;
 let lastDrumClipId = null;
 let lastPianoClipId = null;
 
-const CLIP_COLORS = { piano: "var(--cyan)", drum: "var(--coral)", style: "var(--violet)", sample: "var(--gold)", voice: "var(--lime)" };
+const CLIP_COLORS = { piano: "var(--cyan)", drum: "var(--coral)", style: "var(--violet)", sample: "var(--gold)", voice: "var(--lime)", crop: "var(--amber)" };
 
 // How many beats analyzeAndTrimLoop cuts into the resampled 'style' loop -
 // long enough to cover several musical phrases so the loop repeats far less
 // obviously than a single-bar excerpt would.
 const LOOP_BEATS = 32;
 
-// { id, kind: 'piano'|'drum'|'style'|'sample'|'voice', name, color,
-//   lengthBars (null for 'style'/'sample', which loop by their own buffer's
-//   duration, not a bar count),
-//   pattern? (piano/drum), audioBuffer? (voice/sample),
+// { id, kind: 'piano'|'drum'|'style'|'sample'|'voice'|'crop', name, color,
+//   lengthBars (null for 'style'/'sample'/'crop', which loop by their own
+//   buffer's duration, not a bar count),
+//   pattern? (piano/drum), audioBuffer? (voice/sample/crop),
 //   url/audioBuffer/loopBuffer/nativeBpm/status? (style) }
+// A 'crop' clip is a user-picked excerpt of another clip's own audioBuffer
+// (see openCropEditor) - it plays exactly like a 'sample' (a single buffer
+// looping at its own speed, no BPM retuning), so it rides along with every
+// "sample"-kind branch below rather than getting its own playback path.
 const loopLibrary = [];
 
 // Each Backing Style is decoded from one real licensed recording (see
@@ -1303,19 +1307,31 @@ function analyzeAndTrimLoop(audioBuffer) {
   }
   const loopStartSec = (peakFrame * hop) / sr;
 
-  // 6. Trim a 32-beat (8-bar) window from loopStartSec into a new, smaller
-  // buffer, with a short linear fade-in/out to hide the loop seam. 32 beats
-  // covers several musical phrases rather than a single lick, so the loop
-  // repeats far less obviously than a 4-beat excerpt would.
+  // 6. Trim a 32-beat (8-bar) window from loopStartSec, via the shared
+  // extraction helper below. 32 beats covers several musical phrases rather
+  // than a single lick, so the loop repeats far less obviously than a 4-beat
+  // excerpt would.
   const beatDurationSec = 60 / bpm;
   const loopDurationSec = Math.min(LOOP_BEATS * beatDurationSec, audioBuffer.duration - loopStartSec);
-  const startSample = Math.floor(loopStartSec * sr);
-  const frameLength = Math.max(1, Math.floor(loopDurationSec * sr));
-  const loopBuffer = ctx.createBuffer(audioBuffer.numberOfChannels, frameLength, sr);
-  const fadeSamples = Math.min(Math.floor(sr * 0.015), Math.floor(frameLength / 4));
+  const loopBuffer = extractBufferRange(audioBuffer, loopStartSec, loopDurationSec);
+
+  return { loopBuffer, nativeBpm: bpm };
+}
+
+// Copies a [startSec, startSec + durationSec) window of audioBuffer into a
+// new, smaller AudioBuffer, with a short linear fade-in/out to hide the loop
+// seam. Shared by analyzeAndTrimLoop's automatic crop and the user-driven
+// Crop editor (see openCropEditor) - same operation, different source for
+// startSec/durationSec.
+function extractBufferRange(audioBuffer, startSec, durationSec, fadeSec = 0.015) {
+  const sr = audioBuffer.sampleRate;
+  const startSample = Math.floor(startSec * sr);
+  const frameLength = Math.max(1, Math.floor(durationSec * sr));
+  const buffer = ctx.createBuffer(audioBuffer.numberOfChannels, frameLength, sr);
+  const fadeSamples = Math.min(Math.floor(sr * fadeSec), Math.floor(frameLength / 4));
   for (let c = 0; c < audioBuffer.numberOfChannels; c++) {
     const src = audioBuffer.getChannelData(c);
-    const dst = loopBuffer.getChannelData(c);
+    const dst = buffer.getChannelData(c);
     for (let i = 0; i < frameLength; i++) {
       let sample = src[startSample + i] || 0;
       if (i < fadeSamples) sample *= i / fadeSamples;
@@ -1323,8 +1339,7 @@ function analyzeAndTrimLoop(audioBuffer) {
       dst[i] = sample;
     }
   }
-
-  return { loopBuffer, nativeBpm: bpm };
+  return buffer;
 }
 
 function formatClipDuration(seconds) {
@@ -1342,6 +1357,7 @@ function formatClipDuration(seconds) {
 function decodeStyleSource(source) {
   const { styleClip, liveClip } = source;
   const lenEl = (clip) => clip.cardEl?.querySelector(".loop-card-len");
+  const cropBtnEl = (clip) => clip.cardEl?.querySelector(".loop-card-cropbtn");
   fetch(source.url)
     .then((res) => res.arrayBuffer())
     .then((buf) => ctx.decodeAudioData(buf))
@@ -1349,6 +1365,7 @@ function decodeStyleSource(source) {
       liveClip.audioBuffer = audioBuffer;
       liveClip.status = "ready";
       if (lenEl(liveClip)) lenEl(liveClip).textContent = formatClipDuration(audioBuffer.duration);
+      if (cropBtnEl(liveClip)) cropBtnEl(liveClip).disabled = false;
 
       styleClip.audioBuffer = audioBuffer;
       const { loopBuffer, nativeBpm } = analyzeAndTrimLoop(audioBuffer);
@@ -1356,6 +1373,7 @@ function decodeStyleSource(source) {
       styleClip.nativeBpm = nativeBpm;
       styleClip.status = "ready";
       if (lenEl(styleClip)) lenEl(styleClip).textContent = `${Math.round(nativeBpm)} BPM`;
+      if (cropBtnEl(styleClip)) cropBtnEl(styleClip).disabled = false;
     })
     .catch(() => {
       liveClip.status = "error";
@@ -1374,12 +1392,13 @@ function scheduleTracksBar(barIdx, time) {
   tracks.forEach((track) => {
     if (track.pendingClipId !== null) {
       const pendingClip = findClip(track.pendingClipId);
-      // A 'style'/'sample' clip can't be launched before its audio has
+      // A 'style'/'sample'/'crop' clip can't be launched before its audio has
       // finished decoding (and, for 'style', analyzing) - if it's not ready
       // yet, leave pendingClipId set and try again next bar rather than
-      // promoting to a clip with no buffer to play.
+      // promoting to a clip with no buffer to play. 'crop' clips are always
+      // ready the moment they exist (see openCropEditor).
       const ready = !pendingClip
-        || (pendingClip.kind !== "style" && pendingClip.kind !== "sample")
+        || (pendingClip.kind !== "style" && pendingClip.kind !== "sample" && pendingClip.kind !== "crop")
         || (pendingClip.kind === "style" ? pendingClip.loopBuffer : pendingClip.audioBuffer);
       if (ready) {
         stopTrackAudio(track);
@@ -1387,12 +1406,12 @@ function scheduleTracksBar(barIdx, time) {
         track.pendingClipId = null;
         track.startBar = barIdx;
         if (pendingClip?.kind === "style") playStyleClipOnTrack(track, pendingClip, time);
-        else if (pendingClip?.kind === "sample") playSampleClipOnTrack(track, pendingClip, time);
+        else if (pendingClip?.kind === "sample" || pendingClip?.kind === "crop") playSampleClipOnTrack(track, pendingClip, time);
       }
     }
     if (track.clipId === null || track.muted) return;
     const clip = findClip(track.clipId);
-    if (!clip || clip.kind === "style" || clip.kind === "sample") return; // already playing continuously - nothing to (re)schedule per bar
+    if (!clip || clip.kind === "style" || clip.kind === "sample" || clip.kind === "crop") return; // already playing continuously - nothing to (re)schedule per bar
     const localBar = (barIdx - track.startBar) % clip.lengthBars;
     if (localBar === 0 && (clip.kind === "piano" || clip.kind === "drum")) {
       clip.pattern.forEach((ev) => LOOP_TRIGGERS[clip.kind](ev.payload, time + ev.offsetSec, ev.duration));
@@ -1546,6 +1565,7 @@ const pianoLoopClearBtn = document.getElementById("piano-loop-clear");
 const loopShelfEl = document.getElementById("loop-shelf");
 const trackListEl = document.getElementById("track-list");
 const addTrackBtn = document.getElementById("add-track-btn");
+const resetTracksBtn = document.getElementById("reset-tracks-btn");
 const recordVoiceBtn = document.getElementById("record-voice-btn");
 const voiceStatusEl = document.getElementById("voice-status");
 const globalPlayBtn = document.getElementById("global-play-btn");
@@ -1943,22 +1963,35 @@ function addLoopCard(clip) {
   const card = document.createElement("div");
   card.className = `loop-card kind-${clip.kind}`;
   card.style.setProperty("--card-color", clip.color);
-  // 'style'/'sample' clips have no bar length (they're real recordings,
-  // decoded/analyzed lazily once ctx exists - see decodeStyleSource) so the
-  // length label shows a loading/BPM/duration/error state instead of "N bars".
+  // 'style'/'sample'/'crop' clips have no bar length (they're real
+  // recordings, decoded/analyzed lazily once ctx exists - see
+  // decodeStyleSource) so the length label shows a loading/BPM/duration/error
+  // state instead of "N bars". A 'crop' clip's buffer is extracted
+  // synchronously (see openCropEditor) so it's always "ready" the moment it
+  // exists.
   const lenLabel = clip.kind === "style"
     ? (clip.status === "ready" ? `${Math.round(clip.nativeBpm)} BPM` : clip.status === "error" ? "Unavailable" : "Loading…")
     : clip.kind === "sample"
     ? (clip.status === "ready" ? formatClipDuration(clip.audioBuffer.duration) : clip.status === "error" ? "Unavailable" : "Loading…")
+    : clip.kind === "crop"
+    ? formatClipDuration(clip.audioBuffer.duration)
     : `${clip.lengthBars} bar${clip.lengthBars === 1 ? "" : "s"}`;
   // Backing Style presets (both the "style" and "(Live)" "sample" cards)
-  // are always present and can't be deleted; only recorded takes
-  // (drum/piano/voice) get a delete button.
-  const deletable = clip.kind === "drum" || clip.kind === "piano" || clip.kind === "voice";
+  // are always present and can't be deleted; every user-created clip
+  // (drum/piano/voice recordings, and crops of any clip) can be.
+  const deletable = clip.kind === "drum" || clip.kind === "piano" || clip.kind === "voice" || clip.kind === "crop";
+  // Crop is only meaningful on a clip that's a single real waveform: Backing
+  // Styles (both the trimmed 'style' card and the untouched 'sample' "Live"
+  // card, which share the same full decode) and Voice recordings. A 'style'/
+  // 'sample' clip's audioBuffer isn't populated until decodeStyleSource
+  // resolves, so the button starts disabled and decodeStyleSource enables it.
+  const croppable = clip.kind === "style" || clip.kind === "sample" || clip.kind === "voice";
+  const croppableReady = croppable && !!clip.audioBuffer;
   card.innerHTML = `
     <div class="loop-card-top">
       <button type="button" class="loop-card-playbtn" title="Play/Stop">&#9654;</button>
       <span class="loop-card-name">${clip.name}</span>
+      ${croppable ? `<button type="button" class="loop-card-cropbtn" title="Crop a section into a new loop" ${croppableReady ? "" : "disabled"}>&#9986;</button>` : ""}
       ${deletable ? `<button type="button" class="loop-card-delbtn" title="Delete recording">&#10005;</button>` : ""}
     </div>
     <span class="loop-card-len">${lenLabel}</span>
@@ -1969,6 +2002,14 @@ function addLoopCard(clip) {
     e.stopPropagation();
     toggleClipPlayback(clip.id);
   });
+  if (croppable) {
+    const cropBtn = card.querySelector(".loop-card-cropbtn");
+    cropBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    cropBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openCropEditor(clip);
+    });
+  }
   if (deletable) {
     const delBtn = card.querySelector(".loop-card-delbtn");
     delBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
@@ -1983,9 +2024,201 @@ function addLoopCard(clip) {
   makeDraggable(card, clip.id);
 }
 
-// Removes a recorded take (drum/piano/voice) entirely: stops it if it's
-// currently loaded on a track, drops it from the Loop Library, and clears
-// it from a loop pedal's own Play button if it was that pedal's last take.
+// Draws a min/max peak-per-pixel waveform of audioBuffer into canvas, sized
+// to the canvas's own CSS box (same DPR-aware approach as the Constellation
+// canvas's resizeCanvas above) - a plain visual reference for picking a crop
+// range, not an analysis tool.
+function drawWaveform(canvas, audioBuffer) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const w = Math.max(1, Math.round(rect.width));
+  const h = Math.max(1, Math.round(rect.height));
+  canvas.width = w * dpr;
+  canvas.height = h * dpr;
+  const wctx = canvas.getContext("2d");
+  wctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  wctx.clearRect(0, 0, w, h);
+  const mono = downmixToMono(audioBuffer);
+  const samplesPerPixel = Math.max(1, Math.floor(mono.length / w));
+  const mid = h / 2;
+  wctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--cyan").trim() || "#22d3ee";
+  for (let x = 0; x < w; x++) {
+    const start = x * samplesPerPixel;
+    let min = 0, max = 0;
+    for (let i = 0; i < samplesPerPixel; i++) {
+      const s = mono[start + i] || 0;
+      if (s < min) min = s;
+      if (s > max) max = s;
+    }
+    const yTop = mid + min * mid;
+    const yBottom = mid + max * mid;
+    wctx.fillRect(x, yTop, 1, Math.max(1, yBottom - yTop));
+  }
+}
+
+// Opens a modal for picking a [start, end) window of clip's own audioBuffer
+// (the full, untrimmed decode - shared by 'style' and 'sample' clips, see
+// decodeStyleSource) and extracting it into a brand new 'crop' clip via
+// extractBufferRange. The source clip is never modified, so it stays
+// re-croppable any number of times. This is the app's first true modal;
+// built and torn down dynamically like makeDraggable's drag-ghost, rather
+// than a static element in index.html.
+function openCropEditor(clip) {
+  ensureEngine();
+  const audioBuffer = clip.audioBuffer;
+  if (!audioBuffer) return;
+  const duration = audioBuffer.duration;
+  const MIN_SELECTION_SEC = Math.min(0.3, duration / 3);
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "crop-backdrop";
+  backdrop.innerHTML = `
+    <div class="crop-panel">
+      <div class="crop-panel-header">
+        <span class="crop-panel-title">Crop "${clip.name}"</span>
+        <button type="button" class="crop-close-btn" title="Cancel">&#10005;</button>
+      </div>
+      <div class="crop-waveform-wrap">
+        <canvas class="crop-waveform"></canvas>
+        <div class="crop-selection"></div>
+        <div class="crop-handle crop-handle-start" title="Drag to set start"></div>
+        <div class="crop-handle crop-handle-end" title="Drag to set end"></div>
+      </div>
+      <div class="crop-time-row">
+        <span class="crop-time-start"></span>
+        <span class="crop-time-duration"></span>
+        <span class="crop-time-end"></span>
+      </div>
+      <div class="crop-actions">
+        <button type="button" class="loop-btn crop-preview-btn">&#9654; Preview</button>
+        <button type="button" class="loop-btn crop-confirm-btn">Add Cropped Loop</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(backdrop);
+
+  const wrap = backdrop.querySelector(".crop-waveform-wrap");
+  const canvas = backdrop.querySelector(".crop-waveform");
+  const selectionEl = backdrop.querySelector(".crop-selection");
+  const startHandle = backdrop.querySelector(".crop-handle-start");
+  const endHandle = backdrop.querySelector(".crop-handle-end");
+  const startLabel = backdrop.querySelector(".crop-time-start");
+  const durationLabel = backdrop.querySelector(".crop-time-duration");
+  const endLabel = backdrop.querySelector(".crop-time-end");
+
+  let selStart = 0;
+  let selEnd = Math.min(duration, Math.max(MIN_SELECTION_SEC, duration * 0.25));
+
+  const formatFine = (seconds) => {
+    const m = Math.floor(seconds / 60);
+    const s = (seconds % 60).toFixed(1).padStart(4, "0");
+    return `${m}:${s}`;
+  };
+
+  function refreshUI() {
+    const w = wrap.clientWidth;
+    startHandle.style.left = `${(selStart / duration) * w}px`;
+    endHandle.style.left = `${(selEnd / duration) * w}px`;
+    selectionEl.style.left = `${(selStart / duration) * w}px`;
+    selectionEl.style.width = `${((selEnd - selStart) / duration) * w}px`;
+    startLabel.textContent = formatFine(selStart);
+    endLabel.textContent = formatFine(selEnd);
+    durationLabel.textContent = formatFine(selEnd - selStart);
+  }
+
+  const redraw = () => drawWaveform(canvas, audioBuffer);
+  redraw();
+  refreshUI();
+  window.addEventListener("resize", redraw);
+  window.addEventListener("resize", refreshUI);
+
+  function pxToSec(clientX) {
+    const rect = wrap.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+    return frac * duration;
+  }
+
+  // Pointer Events, not native HTML5 drag - same reasoning as the Loop
+  // Library's own makeDraggable (no touch support otherwise; see its comment
+  // above).
+  function makeHandleDraggable(handle, isStart) {
+    handle.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+      const onMove = (ev) => {
+        const sec = pxToSec(ev.clientX);
+        if (isStart) selStart = Math.max(0, Math.min(sec, selEnd - MIN_SELECTION_SEC));
+        else selEnd = Math.min(duration, Math.max(sec, selStart + MIN_SELECTION_SEC));
+        refreshUI();
+      };
+      const onUp = () => {
+        handle.releasePointerCapture(e.pointerId);
+        handle.removeEventListener("pointermove", onMove);
+        handle.removeEventListener("pointerup", onUp);
+      };
+      handle.addEventListener("pointermove", onMove);
+      handle.addEventListener("pointerup", onUp);
+    });
+  }
+  makeHandleDraggable(startHandle, true);
+  makeHandleDraggable(endHandle, false);
+
+  // The Preview button's source node - tracked so a Preview still playing
+  // when the editor closes (Escape, backdrop click, ✕, or Confirm) gets
+  // cut off instead of running on past the modal's lifetime.
+  let previewSrc = null;
+  function stopPreview() {
+    if (!previewSrc) return;
+    try { previewSrc.stop(); } catch { /* already stopped */ }
+    previewSrc.disconnect();
+    previewSrc = null;
+  }
+
+  function close() {
+    stopPreview();
+    window.removeEventListener("resize", redraw);
+    window.removeEventListener("resize", refreshUI);
+    document.removeEventListener("keydown", onKeydown);
+    backdrop.remove();
+  }
+  function onKeydown(e) { if (e.key === "Escape") close(); }
+  document.addEventListener("keydown", onKeydown);
+  backdrop.querySelector(".crop-close-btn").addEventListener("click", close);
+  backdrop.addEventListener("click", (e) => { if (e.target === backdrop) close(); });
+
+  backdrop.querySelector(".crop-preview-btn").addEventListener("click", () => {
+    stopPreview();
+    const src = ctx.createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(preMaster);
+    src.onended = () => { if (previewSrc === src) previewSrc = null; };
+    src.start(ctx.currentTime, selStart, selEnd - selStart);
+    previewSrc = src;
+  });
+
+  backdrop.querySelector(".crop-confirm-btn").addEventListener("click", () => {
+    const croppedBuffer = extractBufferRange(audioBuffer, selStart, selEnd - selStart);
+    const newClip = {
+      id: nextLoopId++,
+      kind: "crop",
+      name: `${clip.name} (crop)`,
+      color: CLIP_COLORS.crop,
+      lengthBars: null,
+      audioBuffer: croppedBuffer,
+      status: "ready",
+    };
+    loopLibrary.push(newClip);
+    addLoopCard(newClip);
+    const target = firstEmptyTrack();
+    if (target) loadClipOntoTrack(target.id, newClip.id);
+    close();
+  });
+}
+
+// Removes a recorded take (drum/piano/voice) or a user-made crop entirely:
+// stops it if it's currently loaded on a track, drops it from the Loop
+// Library, and clears it from a loop pedal's own Play button if it was that
+// pedal's last take.
 function deleteClip(clipId) {
   const idx = loopLibrary.findIndex((c) => c.id === clipId);
   if (idx === -1) return;
@@ -2138,6 +2371,13 @@ addTrackBtn.addEventListener("click", () => {
   addTrackBtn.disabled = tracks.length >= MAX_TRACKS;
 });
 
+// Empties every track in one click, same as clicking each track's own
+// Clear (x) - the Loop Library shelf is untouched, so anything unloaded
+// here can still be dragged back onto a track afterward.
+resetTracksBtn.addEventListener("click", () => {
+  tracks.forEach((track) => clearTrack(track.id));
+});
+
 // Animates each track's own progress bar independently, since tracks have
 // no shared length - reads the same ctx.currentTime/barStartTime the
 // Constellation canvas playhead already uses, just scoped per track.
@@ -2158,9 +2398,9 @@ function animateTrackProgress() {
       if (!clip.loopBuffer || track.audioStartTime === null) { fill.style.width = "0%"; return; }
       const cycleDuration = clip.loopBuffer.duration / (track.audioSource ? track.audioSource.src.playbackRate.value : 1);
       progress = ((ctx.currentTime - track.audioStartTime) % cycleDuration) / cycleDuration;
-    } else if (clip.kind === "sample") {
-      // A sample clip loops at its own native speed (playbackRate stays 1),
-      // so its cycle length is simply its full recording's own duration.
+    } else if (clip.kind === "sample" || clip.kind === "crop") {
+      // A sample/crop clip loops at its own native speed (playbackRate stays
+      // 1), so its cycle length is simply its own buffer's duration.
       if (!clip.audioBuffer || track.audioStartTime === null) { fill.style.width = "0%"; return; }
       progress = ((ctx.currentTime - track.audioStartTime) % clip.audioBuffer.duration) / clip.audioBuffer.duration;
     } else {
