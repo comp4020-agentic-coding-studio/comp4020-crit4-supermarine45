@@ -424,14 +424,23 @@ html, body {
   max-width: 220px;
 }
 
-#voice-status {
+#voice-status,
+#global-record-status {
   font-size: 11px;
   color: var(--coral);
   letter-spacing: 0.03em;
 }
 
+/* Global Start/Stop - a steady accent (not the "recording" pulse above)
+   since a suspended/resumed session isn't actively capturing anything. */
+.loop-btn.active {
+  background: var(--lime);
+  border-color: var(--lime);
+  color: #0b0f1a;
+}
+
 /* Loop Library shelf: a horizontally-scrolling row of draggable clip
-   cards - the 8 Backing Style presets plus any Piano/Drum/Voice takes the
+   cards - the 7 Backing Style presets plus any Piano/Drum/Voice takes the
    user records. Cards never play by themselves; they only do anything
    once dragged onto a track lane below. */
 #loop-shelf {
@@ -503,6 +512,28 @@ html, body {
 .loop-card-playbtn.active {
   background: var(--card-color);
   color: #0b0f1a;
+}
+
+.loop-card-delbtn {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0b0f1a;
+  border: 1px solid #4a5578;
+  border-radius: 4px;
+  color: #8a93b8;
+  font-size: 9px;
+  cursor: pointer;
+  padding: 0;
+  touch-action: manipulation;
+}
+
+.loop-card-delbtn:hover {
+  border-color: #ff6b6b;
+  color: #ff6b6b;
 }
 
 .loop-card-len {

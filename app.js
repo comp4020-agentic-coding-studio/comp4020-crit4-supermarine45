@@ -431,6 +431,90 @@ function buildPad(freq, startTime) {
   };
 }
 
+// Classical Grand Piano - an additive stack of sine partials (a struck
+// string modeled as a fundamental plus overtones), each decaying at its
+// own rate with higher partials dying out faster than the fundamental -
+// the same "natural decay independent of key-hold" model as the Marimba
+// above, just with more partials. Ratios are nudged slightly sharp of
+// exact integers (2.01, 3.03...) for string-stiffness inharmonicity, and
+// a brief bandpass-filtered noise burst stands in for the hammer strike.
+function buildGrandPiano(freq, startTime) {
+  const partials = [
+    { mult: 1, amp: 0.5, decay: 2.6 },
+    { mult: 2.01, amp: 0.28, decay: 1.8 },
+    { mult: 3.03, amp: 0.16, decay: 1.2 },
+    { mult: 4.06, amp: 0.1, decay: 0.8 },
+    { mult: 5.1, amp: 0.05, decay: 0.5 },
+  ];
+
+  const voiceGain = ctx.createGain();
+  voiceGain.gain.value = 1;
+  voiceGain.connect(preMaster);
+
+  const oscs = [];
+  const envs = [];
+  partials.forEach(({ mult, amp, decay }) => {
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = freq * mult;
+
+    const env = ctx.createGain();
+    env.gain.setValueAtTime(0, startTime);
+    env.gain.linearRampToValueAtTime(amp, startTime + 0.006);
+    env.gain.exponentialRampToValueAtTime(0.0001, startTime + decay); // natural decay, independent of key-hold - like Marimba
+
+    osc.connect(env);
+    env.connect(voiceGain);
+    osc.start(startTime);
+    osc.stop(startTime + decay + 0.1);
+    oscs.push(osc);
+    envs.push(env);
+  });
+
+  // Hammer strike: a ~18ms burst of bandpass-filtered noise, brighter for
+  // higher notes (a hard hammer hitting a shorter, tauter string).
+  const hammer = ctx.createBufferSource();
+  hammer.buffer = noiseBuffer;
+  const hammerFilter = ctx.createBiquadFilter();
+  hammerFilter.type = "bandpass";
+  hammerFilter.frequency.value = Math.min(freq * 2.5, 8000);
+  hammerFilter.Q.value = 0.7;
+  const hammerEnv = ctx.createGain();
+  hammerEnv.gain.setValueAtTime(0, startTime);
+  hammerEnv.gain.linearRampToValueAtTime(0.35, startTime + 0.002);
+  hammerEnv.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.018);
+  hammer.connect(hammerFilter);
+  hammerFilter.connect(hammerEnv);
+  hammerEnv.connect(voiceGain);
+  const hammerOffset = Math.random() * (noiseBuffer.duration - 0.05);
+  hammer.start(startTime, hammerOffset);
+  hammer.stop(startTime + 0.03);
+
+  oscs[0].onended = () => {
+    oscs.forEach((o) => o.disconnect());
+    envs.forEach((e) => e.disconnect());
+    hammer.disconnect();
+    hammerFilter.disconnect();
+    hammerEnv.disconnect();
+    voiceGain.disconnect();
+  };
+
+  return {
+    release() {
+      // Each partial is already decaying on its own; an early release just
+      // imposes a short damper-fall so key-up cuts the string ring short
+      // rather than letting the full natural decay play out.
+      const t = ctx.currentTime;
+      const damperTime = 0.15;
+      envs.forEach((env) => {
+        env.gain.cancelScheduledValues(t);
+        env.gain.setValueAtTime(env.gain.value, t);
+        env.gain.exponentialRampToValueAtTime(0.0001, t + damperTime);
+      });
+    },
+  };
+}
+
 const PATCH_BUILDERS = {
   pluck: buildPluckSynth,
   epiano: buildElectricPiano,
@@ -438,6 +522,7 @@ const PATCH_BUILDERS = {
   bass: buildUprightBass,
   fmbrass: buildFMBrass,
   pad: buildPad,
+  grandPiano: buildGrandPiano,
 };
 const PATCH_COLORS = {
   pluck: "#f5a623",
@@ -446,6 +531,7 @@ const PATCH_COLORS = {
   bass: "#ff5c72",
   fmbrass: "#ff9f5c",
   pad: "#b28dff",
+  grandPiano: "#e8dcc8",
 };
 let leadColorHex = PATCH_COLORS[currentPatch];
 
@@ -498,6 +584,7 @@ let delayNode, delayFeedback, delayWetGain;
 let convolver, reverbWetGain;
 let drumBus, noiseBuffer;
 let currentBpm = 120;
+let masterRecordDest;
 
 function ensureEngine() {
   if (ctx) return;
@@ -508,6 +595,12 @@ function ensureEngine() {
   masterGain.gain.value = 0.9;
   compressor.connect(masterGain);
   masterGain.connect(ctx.destination);
+
+  // A tap for the global Record button: everything that reaches the
+  // speakers also reaches this MediaStream, so recording it captures the
+  // whole live mix (drums, loops, piano) rather than any single source.
+  masterRecordDest = ctx.createMediaStreamDestination();
+  masterGain.connect(masterRecordDest);
 
   // preMaster is where EVERY sound source - every drum hit, every
   // Constellation star, every live piano note - sums together before the
@@ -560,6 +653,11 @@ function ensureEngine() {
   // Every Backing Style's real recording can't be decoded/analyzed before
   // ctx exists, so kick that off now rather than at page load.
   STYLE_SOURCES.forEach(decodeStyleSource);
+
+  // A freshly created AudioContext always starts in the "running" state
+  // (it's only ever created from a user gesture), so the global transport
+  // reflects that immediately rather than waiting for its own button.
+  setGlobalPlaying(true);
 }
 
 function createImpulseResponse(duration, decay) {
@@ -946,6 +1044,11 @@ let nextTrackId = 1;
 let drumClipCount = 0;
 let pianoClipCount = 0;
 let voiceClipCount = 0;
+// Tracks the most recently finished take from each loop pedal, so the
+// pedal's own Play button (see §9) has something to toggle without the
+// user having to scroll down to the Loop Library shelf.
+let lastDrumClipId = null;
+let lastPianoClipId = null;
 
 const CLIP_COLORS = { piano: "var(--cyan)", drum: "var(--coral)", style: "var(--violet)", sample: "var(--gold)", voice: "var(--lime)" };
 
@@ -1424,6 +1527,7 @@ const drumKitPadsEl = document.getElementById("drum-kit-pads");
 const drumModeStepBtn = document.getElementById("drum-mode-step");
 const drumModeKitBtn = document.getElementById("drum-mode-kit");
 const drumLoopRecBtn = document.getElementById("drum-loop-rec");
+const drumLoopPlayBtn = document.getElementById("drum-loop-play");
 const drumLoopClearBtn = document.getElementById("drum-loop-clear");
 const canvas = document.getElementById("constellation-canvas");
 const cctx = canvas.getContext("2d");
@@ -1436,12 +1540,16 @@ const swingSlider = document.getElementById("swing-slider");
 const octaveSlider = document.getElementById("octave-slider");
 const pianoKeysEl = document.getElementById("piano-keys");
 const pianoLoopRecBtn = document.getElementById("piano-loop-rec");
+const pianoLoopPlayBtn = document.getElementById("piano-loop-play");
 const pianoLoopClearBtn = document.getElementById("piano-loop-clear");
 const loopShelfEl = document.getElementById("loop-shelf");
 const trackListEl = document.getElementById("track-list");
 const addTrackBtn = document.getElementById("add-track-btn");
 const recordVoiceBtn = document.getElementById("record-voice-btn");
 const voiceStatusEl = document.getElementById("voice-status");
+const globalPlayBtn = document.getElementById("global-play-btn");
+const globalRecordBtn = document.getElementById("global-record-btn");
+const globalRecordStatusEl = document.getElementById("global-record-status");
 
 function markStarted() {
   dashboard.classList.add("started");
@@ -1564,6 +1672,7 @@ function addRecordedClip(kind, result) {
   const clip = { id: nextLoopId++, kind, name, color: CLIP_COLORS[kind], lengthBars: result.lengthBars, pattern: result.pattern };
   loopLibrary.push(clip);
   addLoopCard(clip);
+  if (kind === "drum") lastDrumClipId = clip.id; else lastPianoClipId = clip.id;
   const target = firstEmptyTrack();
   if (target) loadClipOntoTrack(target.id, clip.id);
 }
@@ -1574,6 +1683,10 @@ drumLoopRecBtn.addEventListener("click", () => {
   const result = drumLoopPedal.pressRecord();
   refreshLoopButton(drumLoopRecBtn, drumLoopPedal);
   if (result.pattern) addRecordedClip("drum", result);
+});
+drumLoopPlayBtn.addEventListener("click", () => {
+  if (lastDrumClipId === null) return;
+  toggleClipPlayback(lastDrumClipId);
 });
 drumLoopClearBtn.addEventListener("click", () => {
   drumLoopPedal.clear();
@@ -1785,6 +1898,10 @@ pianoLoopRecBtn.addEventListener("click", () => {
   refreshLoopButton(pianoLoopRecBtn, pianoLoopPedal);
   if (result.pattern) addRecordedClip("piano", result);
 });
+pianoLoopPlayBtn.addEventListener("click", () => {
+  if (lastPianoClipId === null) return;
+  toggleClipPlayback(lastPianoClipId);
+});
 pianoLoopClearBtn.addEventListener("click", () => {
   pianoLoopPedal.clear();
   refreshLoopButton(pianoLoopRecBtn, pianoLoopPedal);
@@ -1833,10 +1950,15 @@ function addLoopCard(clip) {
     : clip.kind === "sample"
     ? (clip.status === "ready" ? formatClipDuration(clip.audioBuffer.duration) : clip.status === "error" ? "Unavailable" : "Loading…")
     : `${clip.lengthBars} bar${clip.lengthBars === 1 ? "" : "s"}`;
+  // Backing Style presets (both the "style" and "(Live)" "sample" cards)
+  // are always present and can't be deleted; only recorded takes
+  // (drum/piano/voice) get a delete button.
+  const deletable = clip.kind === "drum" || clip.kind === "piano" || clip.kind === "voice";
   card.innerHTML = `
     <div class="loop-card-top">
       <button type="button" class="loop-card-playbtn" title="Play/Stop">&#9654;</button>
       <span class="loop-card-name">${clip.name}</span>
+      ${deletable ? `<button type="button" class="loop-card-delbtn" title="Delete recording">&#10005;</button>` : ""}
     </div>
     <span class="loop-card-len">${lenLabel}</span>
   `;
@@ -1846,10 +1968,35 @@ function addLoopCard(clip) {
     e.stopPropagation();
     toggleClipPlayback(clip.id);
   });
+  if (deletable) {
+    const delBtn = card.querySelector(".loop-card-delbtn");
+    delBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    delBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteClip(clip.id);
+    });
+  }
   loopShelfEl.appendChild(card);
   clip.cardEl = card;
   clipCardEls.set(clip.id, card);
   makeDraggable(card, clip.id);
+}
+
+// Removes a recorded take (drum/piano/voice) entirely: stops it if it's
+// currently loaded on a track, drops it from the Loop Library, and clears
+// it from a loop pedal's own Play button if it was that pedal's last take.
+function deleteClip(clipId) {
+  const idx = loopLibrary.findIndex((c) => c.id === clipId);
+  if (idx === -1) return;
+  const playing = tracks.find((t) => t.clipId === clipId || t.pendingClipId === clipId);
+  if (playing) clearTrack(playing.id);
+  loopLibrary.splice(idx, 1);
+  const card = clipCardEls.get(clipId);
+  if (card) card.remove();
+  clipCardEls.delete(clipId);
+  if (lastDrumClipId === clipId) lastDrumClipId = null;
+  if (lastPianoClipId === clipId) lastPianoClipId = null;
+  refreshTrackDeckUI();
 }
 
 // Direct Play/Stop control for a Loop Library card, as an alternative to
@@ -1953,6 +2100,18 @@ function refreshTrackDeckUI() {
     btn.classList.toggle("active", active);
     btn.innerHTML = active ? "&#9632;" : "&#9654;";
   });
+  // The loop-pedal Play buttons mirror the last take recorded on each pedal:
+  // disabled until a first take exists, then toggle active/glyph the same
+  // way a Loop Library card's own Play/Stop button does.
+  syncPedalPlayBtn(drumLoopPlayBtn, lastDrumClipId, playingClipIds);
+  syncPedalPlayBtn(pianoLoopPlayBtn, lastPianoClipId, playingClipIds);
+}
+
+function syncPedalPlayBtn(btn, clipId, playingClipIds) {
+  btn.disabled = clipId === null;
+  const active = clipId !== null && playingClipIds.has(clipId);
+  btn.classList.toggle("active", active);
+  btn.innerHTML = active ? "&#9632; Play" : "&#9654; Play";
 }
 
 tracks.forEach(buildTrackLane);
@@ -1999,6 +2158,91 @@ function animateTrackProgress() {
   requestAnimationFrame(animateTrackProgress);
 }
 requestAnimationFrame(animateTrackProgress);
+
+// --- Global transport: Start/Stop pauses and resumes the entire session
+//     (drum sequencer, Constellation loop, every track, sustained notes)
+//     with nothing beyond ctx.suspend()/ctx.resume(). That works because
+//     every timing decision in this app - the scheduler's lookahead gate,
+//     every AudioParam automation, every already-started source node - is
+//     expressed in terms of ctx.currentTime, which itself freezes the
+//     instant the context suspends and picks back up exactly where it
+//     left off on resume. No other subsystem needs to know Stop happened. ---
+
+let globalPlaying = false;
+
+function setGlobalPlaying(playing) {
+  globalPlaying = playing;
+  globalPlayBtn.classList.toggle("active", playing);
+  globalPlayBtn.textContent = playing ? "■ Stop" : "▶ Start";
+}
+
+globalPlayBtn.addEventListener("click", () => {
+  const hadCtx = !!ctx;
+  ensureEngine();
+  markStarted();
+  if (!hadCtx) return; // ensureEngine() just created a context, which starts out running - nothing left to toggle
+  if (globalPlaying) {
+    ctx.suspend();
+    setGlobalPlaying(false);
+  } else {
+    ctx.resume();
+    setGlobalPlaying(true);
+  }
+});
+
+// --- Global record: taps masterRecordDest (everything post-masterGain,
+//     i.e. the whole live mix) rather than the mic, and - unlike Voice
+//     Recording - hands back a downloadable file instead of a Loop
+//     Library clip, since a whole-session take doesn't fit the
+//     fixed-length loop model the shelf otherwise assumes. ---
+
+let globalMediaRecorder = null;
+
+function setGlobalRecordStatus(msg) {
+  globalRecordStatusEl.textContent = msg;
+}
+
+function startGlobalRecording() {
+  ensureEngine();
+  const chunks = [];
+  globalMediaRecorder = new MediaRecorder(masterRecordDest.stream);
+  globalMediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+  globalMediaRecorder.onstop = () => {
+    const blob = new Blob(chunks, { type: globalMediaRecorder.mimeType });
+    const ext = globalMediaRecorder.mimeType.split("/")[1]?.split(";")[0] || "webm";
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `constellation-jam-${Date.now()}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setGlobalRecordStatus("");
+  };
+  globalMediaRecorder.start();
+  globalRecordBtn.classList.add("recording");
+  globalRecordBtn.textContent = "■ Stop Rec";
+  setGlobalRecordStatus("Recording session...");
+}
+
+function stopGlobalRecording() {
+  if (globalMediaRecorder && globalMediaRecorder.state !== "inactive") globalMediaRecorder.stop();
+  globalRecordBtn.classList.remove("recording");
+  globalRecordBtn.textContent = "● Record";
+}
+
+globalRecordBtn.addEventListener("click", () => {
+  ensureEngine();
+  markStarted();
+  if (globalMediaRecorder && globalMediaRecorder.state === "recording") {
+    stopGlobalRecording();
+  } else if (typeof MediaRecorder === "undefined") {
+    setGlobalRecordStatus("Recording isn't supported in this browser.");
+  } else {
+    startGlobalRecording();
+  }
+});
 
 // --- Voice recording: mic input becomes a new Loop Library clip kind,
 //     played back through the same preMaster bus as everything else. ---

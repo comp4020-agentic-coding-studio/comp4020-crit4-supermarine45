@@ -37,10 +37,12 @@
          (Digit1-8, Shift for the second pair) - the row grid Open
          Hat/Clap/Rimshot/Cowbell rows are click/tap-only, since QWERTYUIOP
          now belongs to the piano's third row (see #center-stage below).
-         A loop pedal (Rec/Clear) records whatever you tap in Kit mode;
-         finishing a take turns it into a draggable card in the Loop
-         Library shelf (see #track-deck below) instead of looping it
-         forever by itself. Pads/keys are generated in app.js. -->
+         A loop pedal (Rec/Play/Clear) records whatever you tap in Kit
+         mode; finishing a take turns it into a draggable card in the Loop
+         Library shelf (see #track-deck below) AND auto-launches it on the
+         first empty track, so Play toggles that same take on/off without
+         having to scroll down to the shelf. Pads/keys are generated in
+         app.js. -->
     <section id="drum-section">
       <div id="drum-mode-toggle">
         <button id="drum-mode-step" class="drum-mode-btn active" type="button">Step</button>
@@ -50,6 +52,7 @@
       <div id="drum-kit-pads"></div>
       <div id="drum-loop-controls">
         <button id="drum-loop-rec" class="loop-btn" type="button">&#9679; Rec</button>
+        <button id="drum-loop-play" class="loop-btn" type="button" disabled>&#9654; Play</button>
         <button id="drum-loop-clear" class="loop-btn" type="button">Clear</button>
       </div>
     </section>
@@ -66,9 +69,11 @@
          into the top row Q W E R T Y U I O P (highest register), plus
          their on-screen twins. Notes are quantized to the selected scale -
          unless Chromatic is selected, which deliberately opts out of that
-         guarantee. A loop pedal (Rec/Clear) records a live performance;
-         finishing a take turns it into a draggable Loop Library card (see
-         #track-deck below) instead of looping it forever by itself. -->
+         guarantee. A loop pedal (Rec/Play/Clear) records a live
+         performance; finishing a take turns it into a draggable Loop
+         Library card (see #track-deck below) AND auto-launches it on the
+         first empty track, so Play toggles that same take on/off without
+         having to scroll down to the shelf. -->
     <div id="center-stage">
       <canvas id="constellation-canvas"></canvas>
       <div id="piano-overlay">
@@ -79,6 +84,7 @@
           </label>
           <div class="loop-pedal">
             <button id="piano-loop-rec" class="loop-btn" type="button">&#9679; Rec</button>
+            <button id="piano-loop-play" class="loop-btn" type="button" disabled>&#9654; Play</button>
             <button id="piano-loop-clear" class="loop-btn" type="button">Clear</button>
           </div>
         </div>
@@ -112,6 +118,7 @@
           <option value="bass">Upright Bass</option>
           <option value="fmbrass">FM Brass</option>
           <option value="pad">Pad</option>
+          <option value="grandPiano">Classical Grand Piano</option>
         </select>
       </label>
       <label class="control">
@@ -125,11 +132,15 @@
     </section>
 
     <!-- Bottom bar: the Track Deck - tempo controls, plus the Loop Library
-         + Track launcher system (Loopy HD/GarageBand-style). BPM sets the
-         master clock's step duration, scales drum envelope decay times, and
-         live-resamples (playbackRate) any playing Backing Style to match;
-         Swing delays the off-beat steps of the sequencer for a human/jazzy
-         shuffle feel.
+         + Track launcher system (Loopy HD/GarageBand-style). Start/Stop
+         pauses and resumes the ENTIRE session at once (drums, loops, held
+         notes - everything) via AudioContext suspend/resume; Record
+         captures the whole live mix (not just the mic, unlike Record
+         Voice below) and downloads it as an audio file when stopped. BPM
+         sets the master clock's step duration, scales drum envelope decay
+         times, and live-resamples (playbackRate) any playing Backing
+         Style to match; Swing delays the off-beat steps of the sequencer
+         for a human/jazzy shuffle feel.
            Loop Library shelf - one draggable card per clip: the 7 Backing
              Styles (always present, each pre-loaded as a PAIR of cards - a
              longer excerpt of the real recording auto-trimmed to a beat
@@ -146,6 +157,9 @@
          Cards/lanes are generated in app.js. -->
     <section id="track-deck">
       <div id="track-deck-transport">
+        <button id="global-play-btn" class="loop-btn" type="button">&#9654; Start</button>
+        <button id="global-record-btn" class="loop-btn" type="button">&#9679; Record</button>
+        <span id="global-record-status"></span>
         <label class="control horizontal">
           <span>BPM</span>
           <input type="range" id="bpm-slider" min="60" max="180" value="120">
